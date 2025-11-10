@@ -1,25 +1,71 @@
 part of '../offline_db.dart';
 
+/// Abstract interface for local database operations.
+///
+/// Implement this interface to support different local storage backends
+/// (Hive, Isar, Drift, etc.). The package includes [HiveOfflineDelegate]
+/// as the default implementation.
+///
+/// Example:
+/// ```dart
+/// class IsarOfflineDelegate implements OfflineLocalDBDelegate {
+///   @override
+///   Future<void> initialize() async {
+///     // Initialize Isar database
+///   }
+///
+///   // Implement other methods...
+/// }
+/// ```
 abstract class OfflineLocalDBDelegate {
+  /// Initializes the local database.
+  ///
+  /// Called once during [OfflineDB.initialize].
   Future<void> initialize();
+
+  /// Closes the database connection.
+  ///
+  /// Called when disposing the OfflineDB instance.
   Future<void> close();
+
+  /// Clears all data from the database.
+  ///
+  /// Use with caution as this operation cannot be undone.
   Future<void> clearAllData();
 
+  /// Gets all items from a table/collection.
   Future<List<Map<String, dynamic>>> getAll(String tableName);
+
+  /// Gets a single item by its ID.
+  ///
+  /// Returns null if the item doesn't exist.
+  Future<Map<String, dynamic>?> getById(String tableName, String id);
+
+  /// Inserts a new item into a table/collection.
   Future<void> insert(String tableName, Map<String, dynamic> item);
+
+  /// Updates an existing item in a table/collection.
   Future<void> update(String tableName, String id, Map<String, dynamic> item);
-  Future<void> delete(String tableName, String id, Map<String, dynamic> item);
-  Future<void> hardDelete(String nodeName, String id);
+
+  /// Deletes an item by its ID.
+  Future<void> delete(String nodeName, String id);
+
+  /// Deletes all items from a table/collection.
   Future<void> deleteAll(String tableName);
 
+  /// Gets the last sync timestamp for a node.
+  ///
+  /// Returns null if never synced.
   Future<DateTime?> getLastSyncAt(String nodeName);
+
+  /// Sets the last sync timestamp for a node.
   Future<void> setLastSyncAt(String nodeName, DateTime time);
 
-  /// Executa uma query e retorna resultados
+  /// Executes a query and returns results.
   ///
-  /// Delegates que suportam queries nativas (como Isar, Drift) podem
-  /// sobrescrever para otimizar. Delegates simples (como Hive) usam
-  /// a implementação padrão que filtra de forma otimizada.
+  /// Delegates that support native queries (like Isar, Drift) can
+  /// override this for optimization. Simple delegates (like Hive) use
+  /// the default implementation which filters efficiently in-memory.
   Future<List<Map<String, dynamic>>> query(OfflineQuery query) async {
     // Implementação padrão: busca tudo e filtra de forma otimizada
     var items = await getAll(query.nodeName);
@@ -69,16 +115,17 @@ abstract class OfflineLocalDBDelegate {
     return items;
   }
 
-  /// Stream reativo de uma query
+  /// Returns a reactive stream of query results.
   ///
-  /// Delegates que suportam streams nativos (como Isar) podem sobrescrever.
-  /// A implementação padrão re-executa a query quando há mudanças.
+  /// Delegates that support native streams (like Isar) can override this.
+  /// The default implementation emits the initial query result only.
+  /// More sophisticated delegates can provide automatic updates when data changes.
   Stream<List<Map<String, dynamic>>> watchQuery(OfflineQuery query) async* {
-    // Implementação padrão: emite resultado inicial
+    // Default implementation: emit initial result
     yield await this.query(query);
 
-    // Delegates mais sofisticados podem ter streams nativos com
-    // notificações de mudanças. A implementação padrão só emite
-    // o valor inicial.
+    // More sophisticated delegates can have native streams with
+    // change notifications. The default implementation only emits
+    // the initial value.
   }
 }

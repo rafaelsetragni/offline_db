@@ -1,6 +1,9 @@
 part of '../offline_db.dart';
 
-/// Representa uma query com filtros e ordenação
+/// Represents a query with filters and sorting.
+///
+/// Provides a fluent API for building complex queries with filtering,
+/// ordering, and pagination capabilities.
 class OfflineQuery<T extends Object> {
   final String nodeName;
   final List<QueryFilter> filters;
@@ -42,7 +45,16 @@ class OfflineQuery<T extends Object> {
     );
   }
 
-  /// Adiciona um filtro
+  /// Adds a filter condition to the query.
+  ///
+  /// Multiple filters can be chained and will be combined with AND logic.
+  ///
+  /// Example:
+  /// ```dart
+  /// query()
+  ///   .where('age', isGreaterThan: 18)
+  ///   .where('status', isEqualTo: 'active')
+  /// ```
   OfflineQuery<T> where(
     String field, {
     dynamic isEqualTo,
@@ -71,29 +83,63 @@ class OfflineQuery<T extends Object> {
     return copyWith(filters: [...filters, filter]);
   }
 
-  /// Adiciona ordenação
+  /// Adds sorting to the query.
+  ///
+  /// Multiple sorts can be chained for secondary sorting.
+  ///
+  /// Parameters:
+  /// - [field]: The field name to sort by
+  /// - [descending]: If true, sorts in descending order (default: false)
+  ///
+  /// Example:
+  /// ```dart
+  /// query().orderBy('createdAt', descending: true)
+  /// ```
   OfflineQuery<T> orderBy(String field, {bool descending = false}) {
     final sort = QuerySort(field: field, descending: descending);
     return copyWith(sorts: [...sorts, sort]);
   }
 
-  /// Limita quantidade de resultados
+  /// Limits the number of results returned.
+  ///
+  /// Example:
+  /// ```dart
+  /// query().limitTo(10)  // Returns max 10 results
+  /// ```
   OfflineQuery<T> limitTo(int count) {
     return copyWith(limit: count);
   }
 
-  /// Pula N resultados
+  /// Skips the first N results (pagination offset).
+  ///
+  /// Example:
+  /// ```dart
+  /// query().startAfter(10).limitTo(10)  // Gets results 11-20
+  /// ```
   OfflineQuery<T> startAfter(int count) {
     return copyWith(offset: count);
   }
 
-  /// Executa a query e retorna os resultados
+  /// Executes the query and returns all matching results.
+  ///
+  /// Returns a list of [OfflineObject]s containing both the item
+  /// and its sync metadata.
   Future<List<OfflineObject<T>>> getAll() async {
     final results = await _delegate.query(this);
     return _mapResults(results);
   }
 
-  /// Retorna stream reativa com os resultados
+  /// Returns a reactive stream of query results.
+  ///
+  /// The stream will emit new values whenever the underlying data changes.
+  ///
+  /// Example:
+  /// ```dart
+  /// query()
+  ///   .where('status', isEqualTo: 'active')
+  ///   .watch()
+  ///   .listen((items) => print('Active items: ${items.length}'));
+  /// ```
   Stream<List<OfflineObject<T>>> watch() {
     return _delegate.watchQuery(this).map(_mapResults);
   }
@@ -124,7 +170,9 @@ class OfflineQuery<T extends Object> {
   }
 }
 
-/// Filtro individual
+/// Represents an individual filter condition.
+///
+/// Filters are used to select specific items based on field values.
 class QueryFilter {
   final String field;
   final dynamic isEqualTo;
@@ -150,7 +198,7 @@ class QueryFilter {
     this.isNull,
   });
 
-  /// Aplica filtro em um item (fallback para DBs que não suportam queries)
+  /// Checks if an item matches this filter (fallback for DBs without native query support).
   bool matches(Map<String, dynamic> item) {
     final value = item[field];
 
@@ -194,9 +242,14 @@ class QueryFilter {
   }
 }
 
-/// Ordenação
+/// Represents a sort order for query results.
+///
+/// Defines how results should be ordered by a specific field.
 class QuerySort {
+  /// The field name to sort by.
   final String field;
+
+  /// If true, sorts in descending order (default: ascending).
   final bool descending;
 
   const QuerySort({required this.field, this.descending = false});

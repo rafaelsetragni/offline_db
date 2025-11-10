@@ -1,15 +1,45 @@
 part of '../offline_db.dart';
 
+/// Represents a data collection (similar to a table).
+///
+/// Each node manages a specific type of object and handles CRUD operations
+/// independently. Nodes can be used standalone or by inheritance.
+///
+/// Example:
+/// ```dart
+/// class ChatService extends OfflineNode<Chat> {
+///   ChatService() : super('chat', adapter: ChatAdapter());
+/// }
+/// ```
 abstract class OfflineNode<T extends Object> {
+  /// The unique name identifier for this node.
   final String nodeName;
+
+  /// The adapter used to serialize/deserialize objects of type [T].
   final OfflineAdapter<T> adapter;
   late OfflineDB _db;
 
   @visibleForTesting
   void injectDB(OfflineDB db) => _db = db;
 
+  /// Creates a new OfflineNode.
+  ///
+  /// Parameters:
+  /// - [nodeName]: Unique identifier for this node
+  /// - [adapter]: Adapter for object serialization
   OfflineNode(this.nodeName, {required this.adapter});
 
+  /// Creates a standalone instance of OfflineNode.
+  ///
+  /// Use this factory when you prefer not to use inheritance.
+  ///
+  /// Example:
+  /// ```dart
+  /// final userNode = OfflineNode.standalone(
+  ///   'users',
+  ///   adapter: SimpleAdapter<User>(...),
+  /// );
+  /// ```
   factory OfflineNode.standalone(
     String nodeName, {
     required OfflineAdapter<T> adapter,
@@ -17,30 +47,37 @@ abstract class OfflineNode<T extends Object> {
 
   bool _isInitialized = false;
 
+  /// Initializes the node.
+  ///
+  /// This is called automatically by [OfflineDB.initialize].
   Future<void> initialize() async {
     if (_isInitialized) return;
     _isInitialized = true;
   }
 
+  /// Resets the node's initialization state.
+  ///
+  /// Used internally when clearing all data.
   void reset() {
     _isInitialized = false;
   }
 
+  /// Inserts or updates an item (upsert operation).
+  ///
+  /// If an item with the same ID already exists, it will be updated.
+  /// Otherwise, a new item will be inserted.
+  ///
+  /// The operation is marked as pending and will be synced on next [OfflineDB.sync].
   Future<void> upsert(T item) async {
-    final existingObjects = await _getAll();
-    final existingIds = existingObjects
-        .map((obj) => adapter.getId(obj.item))
-        .toSet();
-
-    if (existingIds.contains(adapter.getId(item))) {
-      await update(item);
+    final json = await _db.localDB.getById(nodeName, adapter.getId(item));
+    if (json != null) {
+      await _update(_offlineObjectFromJson(json).copyWith(item: item));
     } else {
-      await insert(item);
+      await _insert(item);
     }
   }
 
-  /// Insert a new item
-  Future<void> insert(T item) async {
+  Future<void> _insert(T item) async {
     final offlineObj = OfflineObject(
       item: item,
       status: SyncStatus.pending,
@@ -51,38 +88,63 @@ abstract class OfflineNode<T extends Object> {
     await _db.localDB.insert(nodeName, offlineObj.toJson());
   }
 
-  /// Update an existing item
-  Future<void> update(T item) async {
-    final offlineObj = OfflineObject(
-      item: item,
-      status: SyncStatus.pending,
-      operation: SyncOperation.update,
-      node: this,
+  Future<void> _update(OfflineObject<T> object) async {
+    await _db.localDB.update(
+      nodeName,
+      adapter.getId(object.item),
+      object //
+          .copyWith(
+            status: SyncStatus.pending,
+            operation:
+                object.needSync && object.operation == SyncOperation.insert
+                ? SyncOperation.insert
+                : SyncOperation.update,
+          )
+          .toJson(),
     );
+  }
+
+  /// Deletes an item by its ID (soft delete).
+  ///
+  /// The item is marked as deleted and will be synced on next [OfflineDB.sync].
+  /// If the item was inserted locally and not yet synced, it will be permanently
+  /// removed from local storage.
+  ///
+  /// Parameters:
+  /// - [id]: The unique identifier of the item to delete
+  Future<void> delete(String id) async {
+    final json = await _db.localDB.getById(nodeName, id);
+    if (json == null) {
+      return;
+    }
+
+    final object = _offlineObjectFromJson(json);
+
+    if (object.needSync && object.operation == SyncOperation.insert) {
+      await _db.localDB.delete(nodeName, id);
+      return;
+    }
 
     await _db.localDB.update(
       nodeName,
-      adapter.getId(item),
-      offlineObj.toJson(),
+      adapter.getId(object.item),
+      object //
+          .copyWith(status: SyncStatus.pending, operation: SyncOperation.delete)
+          .toJson(),
     );
   }
 
-  /// Delete an item (soft delete)
-  Future<void> delete(T item) async {
-    final offlineObj = OfflineObject(
-      item: item,
-      status: SyncStatus.pending,
-      operation: SyncOperation.delete,
-      node: this,
-    );
-
-    await _db.localDB.delete(
-      nodeName,
-      adapter.getId(item),
-      offlineObj.toJson(),
-    );
-  }
-
+  /// Creates a query for this node.
+  ///
+  /// Use this to perform filtered, ordered, and paginated queries.
+  ///
+  /// Example:
+  /// ```dart
+  /// final activeUsers = await userNode
+  ///   .query()
+  ///   .where('status', isEqualTo: 'active')
+  ///   .getAll();
+  /// ```
   OfflineQuery<T> query() {
     return OfflineQuery<T>(
       nodeName: nodeName,
@@ -102,7 +164,7 @@ abstract class OfflineNode<T extends Object> {
 
       if (remoteObj.isDeleted) {
         if (localObj != null && !localObj.needSync) {
-          await _db.localDB.hardDelete(nodeName, remoteId);
+          await _db.localDB.delete(nodeName, remoteId);
         }
         continue;
       }
@@ -137,13 +199,17 @@ abstract class OfflineNode<T extends Object> {
         .toList();
   }
 
-  Future<void> _updateObjectStatus(OfflineObject<T> obj) async {
-    await _db.localDB.update(nodeName, adapter.getId(obj.item), obj.toJson());
+  Future<void> _updateObjectStatus(OfflineObject obj) async {
+    await _db.localDB.update(
+      nodeName,
+      adapter.getId(obj.item as T),
+      obj.toJson(),
+    );
   }
 
   Future<void> _updateObjectsStatus(
-    OfflineObjects<T> objs, [
-    OfflineObject<T> Function(OfflineObject<T> obj)? onChange,
+    OfflineObjects objs, [
+    OfflineObject Function(OfflineObject obj)? onChange,
   ]) async {
     for (var obj in objs) {
       if (onChange != null) {
@@ -168,6 +234,14 @@ abstract class OfflineNode<T extends Object> {
       operation: operation,
       node: this,
     );
+  }
+
+  Future<OfflineObject<T>?> _getById(String id) async {
+    final json = await _db.localDB.getById(nodeName, id);
+    if (json == null) {
+      return null;
+    }
+    return _offlineObjectFromJson(json);
   }
 }
 

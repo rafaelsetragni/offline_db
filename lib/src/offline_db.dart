@@ -1,13 +1,31 @@
 part of '../offline_db.dart';
 
+/// Callback function type for pushing local changes to the server.
+///
+/// Receives a map containing all pending changes grouped by node name.
 typedef PushCallback = Future<void> Function(Map<String, dynamic> objects);
+
+/// Callback function type for pulling remote changes from the server.
+///
+/// Receives the last sync timestamp and should return a map with server changes.
 typedef PullCallback = Future<Map<String, dynamic>> Function(DateTime? since);
 
+/// The central class that manages all nodes and coordinates synchronization.
+///
+/// This class is responsible for:
+/// - Managing multiple [OfflineNode] instances
+/// - Coordinating bidirectional synchronization (push/pull)
+/// - Maintaining sync state across nodes
+/// - Providing access to the local database delegate
 class OfflineDB {
   static OfflineDB? _instance;
   late final List<OfflineNode> _nodes;
   final OfflineLocalDBDelegate _localDB;
 
+  /// Gets the singleton instance of OfflineDB.
+  ///
+  /// Throws [StateError] if OfflineDB hasn't been initialized yet.
+  /// Call [initialize] before accessing this instance.
   static OfflineDB get instance {
     if (_instance == null) {
       throw StateError(
@@ -17,8 +35,16 @@ class OfflineDB {
     return _instance!;
   }
 
+  /// Gets the local database delegate used for storage.
   OfflineLocalDBDelegate get localDB => _localDB;
 
+  /// Creates an instance of OfflineDB.
+  ///
+  /// Parameters:
+  /// - [nodes]: List of [OfflineNode] instances to be managed
+  /// - [localDB]: The local database delegate for storage operations
+  ///
+  /// Throws [ArgumentError] if there are duplicate node names.
   OfflineDB({
     required List<OfflineNode> nodes,
     required OfflineLocalDBDelegate localDB,
@@ -35,10 +61,17 @@ class OfflineDB {
     _instance = this;
   }
 
+  /// Gets a node by its name.
+  ///
+  /// Throws [StateError] if no node with the given name exists.
   OfflineNode getNodeByName(String name) {
     return _nodes.firstWhere((node) => node.nodeName == name);
   }
 
+  /// Initializes the OfflineDB and all its nodes.
+  ///
+  /// This must be called before using any OfflineDB functionality.
+  /// It initializes the local database and all registered nodes.
   Future<void> initialize() async {
     await _localDB.initialize();
 
@@ -47,6 +80,10 @@ class OfflineDB {
     }
   }
 
+  /// Clears all data from the local database.
+  ///
+  /// This will delete all stored data and reset all nodes.
+  /// Use with caution as this operation cannot be undone.
   Future<void> clearAllData() async {
     await _localDB.clearAllData();
 
@@ -56,6 +93,14 @@ class OfflineDB {
     }
   }
 
+  /// Performs bidirectional synchronization with the server.
+  ///
+  /// First pulls remote changes from the server, then pushes
+  /// pending local changes.
+  ///
+  /// Parameters:
+  /// - [onPush]: Callback to send local changes to the server
+  /// - [onPull]: Callback to fetch remote changes from the server
   Future<void> sync({
     required PushCallback onPush,
     required PullCallback onPull,
@@ -64,6 +109,9 @@ class OfflineDB {
     await _pushPendingChanges(onPush);
   }
 
+  /// Disposes the OfflineDB instance and closes the local database.
+  ///
+  /// Call this when you're done using the OfflineDB instance.
   Future<void> dispose() async {
     await _localDB.close();
   }
@@ -77,6 +125,10 @@ class OfflineDB {
       if (offlineObjects.isEmpty) continue;
       pendingObjects[node] = offlineObjects;
       pushMap[node.nodeName] = offlineObjects.toJson();
+    }
+
+    if (pendingObjects.isEmpty) {
+      return;
     }
 
     try {
@@ -106,7 +158,7 @@ class OfflineDB {
     try {
       final lastSyncAt = await _getLastSyncAt();
       final map = await onPull(lastSyncAt);
-      final response = _buildOfflineResponse(map);
+      final response = await _buildOfflineResponse(map);
 
       for (var node in response.changes.keys) {
         final objects = response.changes[node]!;
@@ -127,7 +179,13 @@ class OfflineDB {
     await localDB.setLastSyncAt('__sync_version__', time);
   }
 
-  OfflineResponse _buildOfflineResponse(Map<String, dynamic> json) {
+  Future<OfflineResponse> _buildOfflineResponse(
+    Map<String, dynamic> json,
+  ) async {
+    if (json['timestamp'] == null || json['changes'] == null) {
+      throw FormatException('Invalid offline response format');
+    }
+
     final timestamp = DateTime.parse(json['timestamp'] as String);
     final changesJson = json['changes'] as Map;
     final nodeObjects = <OfflineNode, List<OfflineObject>>{};
@@ -161,15 +219,17 @@ class OfflineDB {
           objects.add(object);
         }
       } else if (nodeChangeJson.containsKey('delete')) {
-        final deletes = (nodeChangeJson['delete'] as List);
-        for (var element in deletes) {
-          final object = OfflineObject(
-            item: node.adapter.fromJson(Map<String, dynamic>.from(element)),
-            status: SyncStatus.ok,
-            operation: SyncOperation.delete,
-            node: node,
-          );
-          objects.add(object);
+        final deleteIds = (nodeChangeJson['delete'] as List<String>);
+        for (var id in deleteIds) {
+          final object = await node._getById(id);
+          if (object != null) {
+            objects.add(
+              object.copyWith(
+                status: SyncStatus.ok,
+                operation: SyncOperation.delete,
+              ),
+            );
+          }
         }
       }
 

@@ -1,152 +1,296 @@
 # Offline DB
 
-Um sistema completo de gerenciamento de dados offline com sincronização bidirecional para aplicações Flutter. Este pacote permite que sua aplicação funcione completamente offline, armazenando dados localmente e sincronizando com o servidor quando a conexão estiver disponível.
+A complete offline data management system with bidirectional synchronization for Flutter applications. This package allows your application to work completely offline, storing data locally and synchronizing with the server when connection is available.
 
-## Características
+## Features
 
-- 🔄 **Sincronização Bidirecional**: Push de mudanças locais e pull de atualizações remotas
-- 📦 **Armazenamento Local**: Suporte a múltiplos backends (Hive, Isar, Drift)
-- 🔍 **Sistema de Queries**: API fluente para consultas com filtros, ordenação e paginação
-- 📊 **Controle de Estado**: Gerenciamento automático de status de sincronização
-- 🎯 **Type-Safe**: Totalmente tipado com suporte a generics
-- 🔌 **Plugável**: Arquitetura baseada em delegates para fácil extensão
-- 📱 **Otimizado para Mobile**: Performance otimizada para dispositivos móveis
+- **Mobile Optimized**: Performance optimized for mobile devices.
+- **Bidirectional Synchronization**: Push local changes and pull remote updates.
+- **Local Storage**: Support for multiple backends (Hive, Isar, Drift).
+- **Query System**: Fluent API for queries with filters, ordering and pagination.
+- **State Control**: Automatic sync status management
 
-## Instalação
+## Installation
 
-```yaml
-dependencies:
-  hive_ce_flutter: ^2.0.0
+```sh
+flutter pub add offline_db
 ```
 
-## Conceitos Principais
+## Core Concepts
 
-### OfflineDB
+`OfflineDB` revolves around creating `NODES` to perform local CRUD operations and `SYNCHRONIZATION` which can be performed whenever the developer decides, for example using WorkManager for background calls or just a `Timer` to run from time to time.
 
-A classe central que gerencia todos os nodes e coordena a sincronização.
+### **NODE**
+
+A `NODE` represents a data collection in your application, similar to a database table. Each NODE manages a specific type of object (like users, posts, messages, etc.) and controls its CRUD operations independently. For example, you can have a NODE for "chat" and another for "message" separately. Data representation will use the `OfflineNode<T>` type where `<T>` represents a model or entity.<br></br>
+We'll have two ways to initialize a `NODE`, which we'll discuss ahead.
+
+### **SYNCHRONIZATION**
+
+`OfflineDB` will orchestrate what needs to be sent and what needs to be received using JSON. As a rule, 2 endpoints will be needed on the server: one for pull and another for push. <br></br>
+When requesting synchronization, `OfflineDB` will create a Map/JSON with the data that will need to be synchronized with the server, informing the respective operations (insert, update, delete). This will be called `PUSH`. <br></br>
+Similarly, `OfflineDB` will request information from the server where it expects a specific Map/JSON to synchronize locally. This will be called `PULL`.
+
+The Map/JSON schema that will be sent in the `PUSH` is:
+```js
+  NODE_NAME: {
+    insert: []
+    update: []
+    delete: []
+  }
+```
+
+Basic example where we would have two `NODE`s (chat and message): 
+```json
+{
+  "chat": {
+    "insert": [
+      {"id": "1", "name": "Development Team"}
+    ],
+    "update": [
+      {"id": "2", "name": "Technical Support"}
+    ],
+    "delete": ["3"]
+  },
+  "message": {
+    "insert": [
+      {"id": "10", "chatId": "1", "text": "Hello everyone!", "senderId": "user1"},
+      {"id": "11", "chatId": "1", "text": "How are you?", "senderId": "user1"}
+    ],
+    "update": [
+      {"id": "9", "chatId": "2", "text": "Edited message"}
+    ],
+    "delete": ["8"]
+  }
+}
+```
+The `chat` node has a new conversation being created, an activity update, and a deletion. <br></br>
+The `message` node contains two new messages being inserted into chat "1", an edited message in chat "2", and a deleted message. <br></br>
+This format groups all operations by type, making batch processing on the server easier. It's important to note that `delete` operations will only have the ID.
+
+The Map/JSON schema expected to be received in the `PULL` is:
+```js
+  TIMESTAMP: DateTime()
+  CHANGES: {
+    NODE_NAME: {
+      insert: []
+      update: []
+      delete: []
+    }
+  }
+
+```
+
+Basic example of the returned JSON still considering the `chat` and `message` NODES:
+
+```json
+{
+  "timestamp": "2025-11-10T15:30:00.000Z",
+  "changes": {
+    "chat": {
+      "insert": [
+        {"id": "5", "name": "Daily Meeting"}
+      ],
+      "update": [
+        {"id": "1", "name": "Development Team - Updated"}
+      ],
+      "delete": ["4"]
+    },
+    "message": {
+      "insert": [
+        {"id": "20", "chatId": "5", "text": "New meeting created", "senderId": "user2"}
+      ],
+      "update": [
+        {"id": "10", "chatId": "1", "text": "Hello everyone! (edited)"}
+      ],
+      "delete": ["12"
+      ]
+    }
+  }
+}
+```
+
+This time we have a `timestamp` that will be used in the next pull. Also note that the `changes` object will be very similar to what is sent in the `PUSH`. Including the `delete` part still needs to send only the ID.
+
+
+### **SUMMARY**
+
+- We'll create Models/Entities
+- We'll create a `NODE` and associate a Model/Entity to it
+- We'll use CRUD methods that will save data locally
+- We'll synchronize by configuring the `PUSH` and `PULL` methods
+
+The `OfflineDB` API will make this entire complex process easier for us.
+
+## OfflineDB
+
+The central class that manages all nodes and coordinates synchronization.
 
 ```dart
 final offlineDB = OfflineDB(
-  nodes: [userNode, postNode],
+  nodes: [chatNode, messageNode],
   localDB: HiveOfflineDelegate(),
 );
 
 await offlineDB.initialize();
 ```
 
-### OfflineNode
+Note that we're using a delegate called `HiveOfflineDelegate`, which is the abstraction of a Local Database using `Hive`. This means we can use other engines to save data locally. We'll discuss ahead how to create another `Delegate` using other databases.
 
-Representa uma coleção de dados (similar a uma tabela). Cada node gerencia um tipo específico de objeto.
+> Also available is `MemoryOfflineDelegate` which persists data in memory. This can be useful in unit tests.
+
+The `OfflineDB` instance also calls the synchronization method.<br></br>
+We'll need to implement two methods: one representing `PUSH` and another `PULL`.<br></br>
+Synchronization is bidirectional:
+
+```dart
+await offlineDB.sync(
+  onPush: (changes) async {
+    // Send local changes to the server
+    await api.push(changes);
+  },
+  onPull: (lastSyncAt) async {
+    // Fetch server changes since last synchronization
+    final response = await api.pull(lastSyncAt);
+    return response;
+  },
+);
+```
+
+> We must respect the JSON patterns that will be sent and received in synchronization. 
+
+**Important**: You are responsible for calling the `sync()` method when you want to synchronize data. Synchronization does not occur automatically. You can implement it in various ways:
+- **Periodic Timer**: Synchronize every X minutes
+- **WorkManager**: Run in background even with the app closed
+- **Connectivity Detection**: Synchronize when connection returns
+- **Manual**: Button for user to trigger when desired
+
+### **OfflineNode**
+
+Represents a data collection (similar to a table). Each node manages a specific type of object.<br></br>
+There are two ways to create a `NODE`: inheriting in a Service or Repository class, or creating a `standalone` instance of it.
+
+Before creating a `NODE` we need to create a model class:
+
+```dart
+class Chat {
+  final String id;
+  final String title;
+
+  Chat(this.id, this.title);
+}
+```
+> It's a good practice to use `String` as ID, because a `UUID` is better than `int` in Offline-First.
+
+Since `Dart` doesn't have automatic serialization, we chose to use the `Adapter` pattern to convert objects to Map/JSON. Use `OfflineAdapter<T>` to help with this conversion, as well as help the `NODE` know what the object's `ID` is.
+
+```dart
+class ChatAdapter extends OfflineAdapter<Chat> {
+  @override
+  String getId(Chat item) => item.id;
+
+  @override
+  Map<String, dynamic> toJson(Chat item) {
+    return {
+      "id": item.id,
+      "title": item.title
+    };
+  }
+
+  @override
+  Chat fromJson(Map<String, dynamic> json) {
+    return Chat(json['id'], json['title']);
+  }
+}
+```
+
+With the `Model` and its `Adapter` ready we can create the `NODE`.
+
+The `OfflineNode` is an abstract class, so you can use it by inheriting in a repository:
+
+```dart
+class ChatService extends OfflineNode<Chat> {
+  ChatService() : super('chat', adapter: ChatAdapter());
+}
+```
+
+That's enough!
+
+The `ChatService` class will gain some methods to help persist local data, as well as read it. In fact, data reading can be reactive, which makes the `NODE` inform when there are changes, making it a reactive database.
+
+> Don't forget to add the node instance to `OfflineDB`.
+
+
+### **Operations**
+
+The `Node` can perform `upsert` (Insert or Update), `delete` operations and queries using `Queries`.
+
+#### Upsert (Insert or Update)
+
+```dart
+final chat = Chat('1', 'Chat 1');
+await chatService.upsert(chat);
+```
+
+#### Delete
+
+```dart
+final id = '1';
+await userNode.delete(id);
+```
+
+#### Query
+
+**WE'LL TALK ABOUT QUERIES BELOW**
+
+### **Standalone**
+
+If for some reason you don't want to use inheritance, you can instantiate using the `standalone` factory. Additionally, the `SimpleAdapter` class is also available to help with adaptation without inheritance.
 
 ```dart
 final userNode = OfflineNode.standalone(
-  'users',
+  'user',
   adapter: SimpleAdapter<User>(
     getId: (user) => user.id,
-    setId: (user, id) => user.copyWith(id: id),
     toJson: (user) => user.toJson(),
     fromJson: (json) => User.fromJson(json),
   ),
 );
 ```
 
-### OfflineAdapter
+This can be used when a more functional paradigm is desired, but using the first form presented in this documentation is recommended.
 
-Define como seus objetos são serializados e identificados. Use `SimpleAdapter` para casos simples ou crie um adapter customizado para casos complexos.
+### **Queries**
 
-### OfflineLocalDBDelegate
 
-Interface para o sistema de armazenamento local. Incluso: `HiveOfflineDelegate` para Hive CE.
+The query system offers a fluent and powerful API, similar to an ORM, to assist in data queries.
 
-## Uso Básico
-
-### 1. Configuração Inicial
+Here are some basic examples.
 
 ```dart
-// Crie os adapters para seus modelos
-final userAdapter = SimpleAdapter<User>(
-  getId: (user) => user.id,
-  setId: (user, id) => user.copyWith(id: id),
-  toJson: (user) => user.toJson(),
-  fromJson: (json) => User.fromJson(json),
-);
-
-final postAdapter = SimpleAdapter<Post>(
-  getId: (post) => post.id,
-  setId: (post, id) => post.copyWith(id: id),
-  toJson: (post) => post.toJson(),
-  fromJson: (json) => Post.fromJson(json),
-);
-
-// Crie os nodes
-final userNode = OfflineNode.standalone('users', adapter: userAdapter);
-final postNode = OfflineNode.standalone('posts', adapter: postAdapter);
-
-// Inicialize o OfflineDB
-final offlineDB = OfflineDB(
-  nodes: [userNode, postNode],
-  localDB: HiveOfflineDelegate(),
-);
-
-await offlineDB.initialize();
-```
-
-### 2. Operações CRUD
-
-#### Inserir
-
-```dart
-final user = User(id: '1', name: 'João', email: 'joao@example.com');
-await userNode.insert(user);
-```
-
-#### Atualizar
-
-```dart
-final updatedUser = user.copyWith(name: 'João Silva');
-await userNode.update(updatedUser);
-```
-
-#### Upsert (Insert ou Update)
-
-```dart
-await userNode.upsert(user);
-```
-
-#### Deletar (Soft Delete)
-
-```dart
-await userNode.delete(user);
-```
-
-### 3. Queries
-
-O sistema de queries oferece uma API fluente e poderosa:
-
-```dart
-// Buscar todos os usuários
+// Fetch all users
 final allUsers = await userNode.query().getAll();
 
-// Filtrar por campo
+// Filter by field
 final activeUsers = await userNode
   .query()
   .where('status', isEqualTo: 'active')
   .getAll();
 
-// Múltiplos filtros
+// Multiple filters
 final results = await userNode
   .query()
   .where('age', isGreaterThan: 18)
   .where('city', isEqualTo: 'São Paulo')
   .getAll();
 
-// Ordenação
+// Ordering
 final sortedUsers = await userNode
   .query()
   .orderBy('name')
   .getAll();
 
-// Paginação
+// Pagination
 final page1 = await userNode
   .query()
   .orderBy('createdAt', descending: true)
@@ -159,191 +303,125 @@ final page2 = await userNode
   .startAfter(10)
   .limitTo(10)
   .getAll();
-
-// Queries reativas (Stream)
-userNode
-  .query()
-  .where('status', isEqualTo: 'active')
-  .watch()
-  .listen((users) {
-    print('Usuários ativos: ${users.length}');
-  });
 ```
 
-#### Operadores de Filtro Disponíveis
+#### Available Filter Operators
 
-- `isEqualTo`: Igual a
-- `isNotEqualTo`: Diferente de
-- `isLessThan`: Menor que
-- `isLessThanOrEqualTo`: Menor ou igual a
-- `isGreaterThan`: Maior que
-- `isGreaterThanOrEqualTo`: Maior ou igual a
-- `whereIn`: Valor está na lista
-- `whereNotIn`: Valor não está na lista
-- `isNull`: Campo é nulo (true) ou não é nulo (false)
+- `isEqualTo`: Equal to
+- `isNotEqualTo`: Not equal to
+- `isLessThan`: Less than
+- `isLessThanOrEqualTo`: Less than or equal to
+- `isGreaterThan`: Greater than
+- `isGreaterThanOrEqualTo`: Greater than or equal to
+- `whereIn`: Value is in the list
+- `whereNotIn`: Value is not in the list
+- `isNull`: Field is null (true) or not null (false)
 
-### 4. Sincronização
+#### Watch Query
 
-A sincronização é bidirecional e automática:
+We can replace the `getAll` method of `queries` with `watch`. This will return a `Stream` that will inform about every data modification based on the filters.
 
 ```dart
-await offlineDB.sync(
-  onPush: (changes) async {
-    // Envie as mudanças locais para o servidor
-    await api.push(changes);
-  },
-  onPull: (lastSyncAt) async {
-    // Busque mudanças do servidor desde a última sincronização
-    final response = await api.pull(lastSyncAt);
-    return response;
-  },
-);
+
+// Reactive queries (Stream)
+final userStream = userNode
+  .query()
+  .where('status', isEqualTo: 'active')
+  .watch();
+
+
+  userStream.listen((users) {
+    print('Active users: ${users.length}');
+  });
+
 ```
 
-## Formato de Sincronização
+A good tip is to add the search method directly in the class that inherits the `Node`:
 
-### Push (Local → Servidor)
+```dart
+class ChatService extends OfflineNode<Chat> {
+  ChatService() : super('chat', adapter: ChatAdapter());
 
-O sistema envia mudanças locais agrupadas por operação:
-
-```json
-{
-  "users": {
-    "insert": [
-      {"id": "1", "name": "João", "email": "joao@example.com"}
-    ],
-    "update": [
-      {"id": "2", "name": "Maria Silva", "email": "maria@example.com"}
-    ],
-    "delete": ["3", "4"]
-  },
-  "posts": {
-    "insert": [],
-    "update": [
-      {"id": "10", "title": "Novo título", "content": "..."}
-    ],
-    "delete": []
+  Stream<List<Chat>> watchChats() {
+    return query()
+            .where('status', isEqualTo: 'active')
+            .watch()
+            .map((list) => list.map((obj) => obj.item).toList());
   }
 }
 ```
 
-### Pull (Servidor → Local)
+> It's obvious but it doesn't hurt to remind: Close the Streams after `Dispose`.
 
-O servidor deve retornar mudanças desde o último sync:
 
-```json
-{
-  "timestamp": "2025-11-10T15:30:00.000Z",
-  "changes": {
-    "users": {
-      "insert": [
-        {"id": "5", "name": "Pedro", "email": "pedro@example.com"}
-      ],
-      "update": [
-        {"id": "2", "name": "Maria Santos", "email": "maria@example.com"}
-      ],
-      "delete": [
-        {"id": "3"}
-      ]
-    },
-    "posts": {
-      "insert": [],
-      "update": [],
-      "delete": []
-    }
-  }
-}
-```
+#### OfflineObject
 
-**Importante**: O campo `timestamp` é obrigatório e deve ser o timestamp do servidor no momento da resposta.
-
-## Gerenciamento de Estado de Sincronização
-
-Cada objeto possui metadata de sincronização:
+Queries always return an `OfflineObject`. This is done so the developer can see the synchronization metadata along with the original model:
 
 ```dart
 final users = await userNode.query().getAll();
 
 for (var userObj in users) {
-  print('User: ${userObj.item.name}');
-  print('Precisa sincronizar: ${userObj.needSync}');
+  print('User: ${userObj.item}');
   print('Status: ${userObj.status}'); // pending, ok, failed
-  print('Operação: ${userObj.operation}'); // insert, update, delete
-  print('Está deletado: ${userObj.isDeleted}');
+  print('Operation: ${userObj.operation}'); // insert, update, delete
+  print('Needs sync: ${userObj.needSync}');
+  print('Is deleted: ${userObj.isDeleted}');
 }
 ```
 
-### Estados de Sincronização
+#### Synchronization States
 
-- `SyncStatus.pending`: Mudança local ainda não sincronizada
-- `SyncStatus.ok`: Sincronizado com sucesso
-- `SyncStatus.failed`: Falha na sincronização (será retentado)
+- `SyncStatus.pending`: Local change not yet synchronized
+- `SyncStatus.ok`: Successfully synchronized
+- `SyncStatus.failed`: Synchronization failed (will be retried)
 
-### Operações
+#### Operations
 
-- `SyncOperation.insert`: Novo objeto criado localmente
-- `SyncOperation.update`: Objeto modificado localmente
-- `SyncOperation.delete`: Objeto deletado localmente (soft delete)
+- `SyncOperation.insert`: New object created locally
+- `SyncOperation.update`: Object modified locally
+- `SyncOperation.delete`: Object deleted locally (soft delete)
 
-## Delegates de Armazenamento
+This information is enough for the user to know the state of each item separately.
 
-### HiveOfflineDelegate (Incluso)
+## Storage Delegates
 
-Implementação baseada em Hive CE, ideal para a maioria dos casos:
+`OfflineDB` maintains a default Delegate called `HiveOfflineDelegate`, but it's possible to create other delegates and use other local databases. Here's a short tutorial on how to do this:
 
-```dart
-final delegate = HiveOfflineDelegate();
-```
-
-Para testes, você pode especificar um path customizado:
-
-```dart
-final delegate = HiveOfflineDelegate(customPath: './test_hive');
-```
-
-### Criando um Delegate Customizado
-
-Implemente `OfflineLocalDBDelegate` para usar outros sistemas:
+Implement `OfflineLocalDBDelegate` to use other systems:
 
 ```dart
 class IsarOfflineDelegate implements OfflineLocalDBDelegate {
   @override
   Future<void> initialize() async {
-    // Inicializa Isar
+    // Initialize Isar
   }
   
   @override
   Future<List<Map<String, dynamic>>> getAll(String tableName) async {
-    // Implementação com Isar
+    // Implementation with Isar
   }
   
-  // ... outros métodos
+  // ... other methods
 }
 ```
 
-## Tratamento de Conflitos
 
-O sistema usa uma estratégia "last write wins" (última escrita vence):
+## Utilities
 
-1. Mudanças locais pendentes sempre têm prioridade
-2. Se não há mudanças locais, aceita a versão do servidor
-3. Deletes remotos são aplicados apenas se não há mudanças locais pendentes
-
-## Utilitários
-
-### Limpar Todos os Dados
+### Clear All Data
 
 ```dart
 await offlineDB.clearAllData();
 ```
 
-### Acessar Node por Nome
+### Access Node by Name
 
 ```dart
 final userNode = offlineDB.getNodeByName('users');
 ```
 
-### Acesso Direto ao Delegate
+### Direct Access to Delegate
 
 ```dart
 final lastSync = await offlineDB.localDB.getLastSyncAt('users');
@@ -355,149 +433,26 @@ final lastSync = await offlineDB.localDB.getLastSyncAt('users');
 await offlineDB.dispose();
 ```
 
-## Exemplos Práticos
+## Contributing
 
-### Integração com GetX/Riverpod
+Contributions are welcome! If you found a bug, have a suggestion for improvement, or want to add a new feature:
 
-```dart
-class UserRepository {
-  final OfflineNode<User> _node;
-  
-  UserRepository(this._node);
-  
-  Stream<List<User>> watchActiveUsers() {
-    return _node
-      .query()
-      .where('status', isEqualTo: 'active')
-      .orderBy('name')
-      .watch()
-      .map((objects) => objects.map((obj) => obj.item).toList());
-  }
-  
-  Future<void> createUser(User user) async {
-    await _node.insert(user);
-  }
-  
-  Future<void> updateUser(User user) async {
-    await _node.update(user);
-  }
-  
-  Future<void> deleteUser(User user) async {
-    await _node.delete(user);
-  }
-}
-```
+1. Fork the project
+2. Create a branch for your feature (`git checkout -b feature/MyFeature`)
+3. Commit your changes (`git commit -m 'Add MyFeature'`)
+4. Push to the branch (`git push origin feature/MyFeature`)
+5. Open a Pull Request
 
-### Sincronização Periódica
+Please make sure to:
+- Add tests for new features
+- Keep code formatted (`dart format .`)
+- Follow the project's code conventions
 
-```dart
-Timer.periodic(Duration(minutes: 5), (_) async {
-  try {
-    await offlineDB.sync(
-      onPush: (changes) => api.push(changes),
-      onPull: (since) => api.pull(since),
-    );
-  } catch (e) {
-    print('Erro na sincronização: $e');
-  }
-});
-```
+## License
 
-### Sincronização ao Voltar Online
+This project is licensed under the MIT license - see the [LICENSE](LICENSE) file for details.
 
-```dart
-Connectivity().onConnectivityChanged.listen((result) async {
-  if (result != ConnectivityResult.none) {
-    await offlineDB.sync(
-      onPush: (changes) => api.push(changes),
-      onPull: (since) => api.pull(since),
-    );
-  }
-});
-```
+## About
 
-## Testes
-
-O sistema foi projetado para ser facilmente testável:
-
-```dart
-void main() {
-  late OfflineDB db;
-  late OfflineNode<User> userNode;
-  
-  setUp(() async {
-    final adapter = SimpleAdapter<User>(/* ... */);
-    userNode = OfflineNode.standalone('users', adapter: adapter);
-    
-    db = OfflineDB(
-      nodes: [userNode],
-      localDB: HiveOfflineDelegate(customPath: './test_data'),
-    );
-    
-    await db.initialize();
-  });
-  
-  tearDown(() async {
-    await db.clearAllData();
-    await db.dispose();
-  });
-  
-  test('insert user', () async {
-    final user = User(id: '1', name: 'Test');
-    await userNode.insert(user);
-    
-    final results = await userNode.query().getAll();
-    expect(results.length, 1);
-    expect(results.first.item.name, 'Test');
-  });
-}
-```
-
-## Performance
-
-### Otimizações do Hive
-
-- Queries são executadas com iteração lazy
-- Filtros são aplicados durante a iteração (sem carregar tudo na memória)
-- Paginação é aplicada após ordenação para economizar processamento
-- Streams reativos usando `box.watch()`
-
-### Dicas de Performance
-
-1. Use `limitTo()` para paginar resultados grandes
-2. Crie índices específicos se usar Isar ou Drift
-3. Evite queries muito complexas em grandes datasets
-4. Use `watch()` para updates reativos em vez de polling
-
-## Troubleshooting
-
-### "OfflineDB not initialized"
-
-```dart
-// Sempre chame initialize() antes de usar
-await offlineDB.initialize();
-```
-
-### "Duplicate node names"
-
-```dart
-// Cada node deve ter um nome único
-final node1 = OfflineNode.standalone('users', ...);
-final node2 = OfflineNode.standalone('users', ...); // ❌ Erro!
-```
-
-### Sincronização não funciona
-
-1. Verifique se os callbacks `onPush` e `onPull` estão corretos
-2. Confirme que o servidor retorna o formato esperado no pull
-3. Verifique se o campo `timestamp` está presente na resposta do pull
-
-### Dados não aparecem nas queries
-
-```dart
-// Lembre-se que queries excluem itens deletados por padrão
-final all = await node.query().getAll(); // Não mostra deletados
-
-// Para incluir deletados, use o método interno (apenas para debug)
-```
+This package was created and is maintained by [Flutterando](https://flutterando.com.br), a Brazilian community dedicated to Flutter development.
 

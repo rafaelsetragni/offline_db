@@ -1,20 +1,28 @@
 name: offline_db
-description: A starting point for Dart libraries or applications.
+description: Complete offline data management system with bidirectional synchronization for Flutter. Support for local CRUD, reactive queries and multiple backends.
 version: 0.0.1
-# repository: https://github.com/my_org/my_repo
+repository: https://github.com/Flutterando/offline_db
+homepage: https://flutterando.com.br
+issue_tracker: https://github.com/Flutterando/offline_db/issues
 
 environment:
   sdk: ^3.9.2
+
+topics:
+  - offline
+  - database
+  - sync
+  - offline-first
+  - hive
 
 # Add regular dependencies here.
 dependencies:
   flutter:
     sdk: flutter
+  hive_ce: ^2.15.1
   hive_ce_flutter: ^2.3.3
   # path: ^1.9.0
 
 dev_dependencies:
   lints: ^6.0.0
   test: ^1.25.6
-
-flutter:

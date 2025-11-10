@@ -1,40 +1,44 @@
 part of '../offline_db.dart';
 
-/// Implementação do OfflineLocalDBDelegate usando Hive CE
+/// Implementation of [OfflineLocalDBDelegate] using Hive CE.
 ///
-/// Características:
-/// - Armazena dados como JSON em boxes do Hive
-/// - Cada tabela é um box separado
-/// - Metadata (lastSyncAt) é armazenada em box dedicado
-/// - Operações são rápidas e totalmente offline
+/// Features:
+/// - Stores data as JSON in Hive boxes
+/// - Each table is a separate box
+/// - Metadata (lastSyncAt) is stored in dedicated box
+/// - Operations are fast and completely offline
+/// - Supports reactive queries with box.watch()
 class HiveOfflineDelegate implements OfflineLocalDBDelegate {
-  /// Boxes para cada tabela (lazy-loaded)
+  /// Boxes for each table (lazy-loaded)
   final Map<String, Box<Map<dynamic, dynamic>>> _boxes = {};
 
-  /// Box para metadata de sincronização
+  /// Box for sync metadata
   late Box<int> _metadataBox;
 
-  /// Flag para controlar inicialização
+  /// Initialization control flag
   bool _initialized = false;
 
-  /// Path customizado (útil para testes)
+  /// Custom path (useful for testing)
   final String? customPath;
 
-  /// Construtor
+  /// Creates a new HiveOfflineDelegate.
+  ///
+  /// Parameters:
+  /// - [customPath]: Optional custom path for Hive storage (useful for tests)
   HiveOfflineDelegate({this.customPath});
 
   @override
   Future<void> initialize() async {
     if (_initialized) return;
 
-    // Inicializa Hive
+    // Initialize Hive
     if (customPath != null) {
       Hive.init(customPath);
     } else {
       await Hive.initFlutter();
     }
 
-    // Abre box de metadata
+    // Open metadata box
     _metadataBox = await Hive.openBox<int>('_offline_metadata');
 
     _initialized = true;
@@ -44,19 +48,19 @@ class HiveOfflineDelegate implements OfflineLocalDBDelegate {
   Future<void> close() async {
     if (!_initialized) return;
 
-    // Fecha todos os boxes abertos
+    // Close all open boxes
     for (var box in _boxes.values) {
       await box.close();
     }
     _boxes.clear();
 
-    // Fecha box de metadata
+    // Close metadata box
     await _metadataBox.close();
 
     _initialized = false;
   }
 
-  /// Obtém ou cria box para a tabela
+  /// Gets or creates a box for the table.
   Future<Box<Map<dynamic, dynamic>>> _getBox(String tableName) async {
     if (!_initialized) {
       throw StateError(
@@ -68,7 +72,7 @@ class HiveOfflineDelegate implements OfflineLocalDBDelegate {
       return _boxes[tableName]!;
     }
 
-    // Abre box e armazena no cache
+    // Open box and store in cache
     final box = await Hive.openBox<Map>(tableName);
     _boxes[tableName] = box;
     return box;
@@ -78,15 +82,22 @@ class HiveOfflineDelegate implements OfflineLocalDBDelegate {
   Future<List<Map<String, dynamic>>> getAll(String tableName) async {
     final box = await _getBox(tableName);
 
-    // Converte valores do Hive para List<Map<String, dynamic>>
+    // Convert Hive values to List<Map<String, dynamic>>
     return box.values.map((item) => Map<String, dynamic>.from(item)).toList();
+  }
+
+  @override
+  Future<Map<String, dynamic>?> getById(String tableName, String id) {
+    return _getBox(tableName).then((box) {
+      final rawItem = box.get(id);
+      return rawItem != null ? Map<String, dynamic>.from(rawItem) : null;
+    });
   }
 
   @override
   Future<void> insert(String tableName, Map<String, dynamic> item) async {
     final box = await _getBox(tableName);
 
-    // Usa o ID como chave
     final id = item['id'] as String;
     await box.put(id, item);
   }
@@ -99,22 +110,11 @@ class HiveOfflineDelegate implements OfflineLocalDBDelegate {
   ) async {
     final box = await _getBox(tableName);
 
-    // Put sobrescreve se já existir
     await box.put(id, item);
   }
 
   @override
-  Future<void> delete(
-    String tableName,
-    String id,
-    Map<String, dynamic> item,
-  ) async {
-    // Soft delete: atualiza com metadata de delete
-    await update(tableName, id, item);
-  }
-
-  @override
-  Future<void> hardDelete(String tableName, String id) async {
+  Future<void> delete(String tableName, String id) async {
     final box = await _getBox(tableName);
     await box.delete(id);
   }
