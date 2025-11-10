@@ -1,0 +1,37 @@
+# Ignore example platform folders and unnecessary files
+example/android/
+example/ios/
+example/linux/
+example/macos/
+example/web/
+example/windows/
+
+# Ignore example configuration files
+example/analysis_options.yaml
+example/example.iml
+example/pubspec.yaml
+
+# Ignore example lib (código não necessário para documentação)
+example/lib/
+
+# Ignore example tests
+example/test/
+
+# Ignore local development files
+*.iml
+.dart_tool/
+.packages
+.pub/
+build/
+*.log
+
+# Ignore IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Ignore git files
+.git/
+.gitignore
