@@ -1,4 +1,4 @@
-part of '../offline_db.dart';
+part of '../../offline_db.dart';
 
 /// Represents a query with filters and sorting.
 ///

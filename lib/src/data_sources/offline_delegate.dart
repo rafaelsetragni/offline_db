@@ -1,4 +1,4 @@
-part of '../offline_db.dart';
+part of '../../offline_db.dart';
 
 /// Abstract interface for local database operations.
 ///
@@ -42,7 +42,11 @@ abstract class OfflineLocalDBDelegate {
   Future<Map<String, dynamic>?> getById(String tableName, String id);
 
   /// Inserts a new item into a table/collection.
-  Future<void> insert(String tableName, Map<String, dynamic> item);
+  Future<void> insert(
+    String tableName,
+    Map<String, dynamic> item,
+    String idField,
+  );
 
   /// Updates an existing item in a table/collection.
   Future<void> update(String tableName, String id, Map<String, dynamic> item);

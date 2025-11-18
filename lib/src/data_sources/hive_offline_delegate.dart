@@ -1,4 +1,4 @@
-part of '../offline_db.dart';
+part of '../../offline_db.dart';
 
 /// Implementation of [OfflineLocalDBDelegate] using Hive CE.
 ///
@@ -95,10 +95,14 @@ class HiveOfflineDelegate implements OfflineLocalDBDelegate {
   }
 
   @override
-  Future<void> insert(String tableName, Map<String, dynamic> item) async {
+  Future<void> insert(
+    String tableName,
+    Map<String, dynamic> item,
+    String idField,
+  ) async {
     final box = await _getBox(tableName);
 
-    final id = item['id'] as String;
+    final id = item[idField] as String;
     await box.put(id, item);
   }
 
