@@ -1,4 +1,4 @@
-part of '../offline_db.dart';
+part of '../../offline_db.dart';
 
 /// Represents the synchronization status of an object.
 enum SyncStatus {
@@ -52,6 +52,8 @@ class OfflineObject<T extends Object> {
   /// Returns true if this object is marked as deleted.
   bool get isDeleted => operation == SyncOperation.delete;
 
+  String get nodeName => _node.nodeName;
+
   OfflineObject({
     required this.item,
     required this.status,
@@ -80,6 +82,20 @@ class OfflineObject<T extends Object> {
       status: status ?? this.status,
       operation: operation ?? this.operation,
       node: _node,
+    );
+  }
+
+  OfflineObject<T> fromJson(
+    String nodeName,
+    Map<String, dynamic> json, {
+    SyncStatus syncStatus = SyncStatus.ok,
+    SyncOperation operation = SyncOperation.insert,
+  }) {
+    return OfflineObject<T>(
+      item: _node.adapter.fromJson(json),
+      status: syncStatus,
+      operation: operation,
+      node: OfflineDB.instance.getNodeByName(nodeName) as OfflineNode<T>,
     );
   }
 }

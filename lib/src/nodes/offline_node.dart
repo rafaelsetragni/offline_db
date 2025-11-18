@@ -1,4 +1,4 @@
-part of '../offline_db.dart';
+part of '../../offline_db.dart';
 
 /// Represents a data collection (similar to a table).
 ///
@@ -17,7 +17,10 @@ abstract class OfflineNode<T extends Object> {
 
   /// The adapter used to serialize/deserialize objects of type [T].
   final OfflineAdapter<T> adapter;
+
   late OfflineDB _db;
+
+  late List<DataSyncStrategy> _syncStrategies;
 
   @visibleForTesting
   void injectDB(OfflineDB db) => _db = db;
@@ -62,6 +65,28 @@ abstract class OfflineNode<T extends Object> {
     _isInitialized = false;
   }
 
+  Future<void> _pushLocalObject(OfflineObject<T> object) async {
+    for (var strategy in _syncStrategies) {
+      try {
+        final syncResult = await strategy.onPushToRemote(object);
+        if (syncResult != object.status) {
+          object._node._updateObjectStatus(object.copyWith(status: syncResult));
+        }
+        switch (syncResult) {
+          case SyncStatus.ok:
+            return;
+          case SyncStatus.pending:
+          case SyncStatus.failed:
+            continue;
+        }
+      } catch (e) {
+        object._node._updateObjectStatus(
+          object.copyWith(status: SyncStatus.failed),
+        );
+      }
+    }
+  }
+
   /// Inserts or updates an item (upsert operation).
   ///
   /// If an item with the same ID already exists, it will be updated.
@@ -85,7 +110,14 @@ abstract class OfflineNode<T extends Object> {
       node: this,
     );
 
-    await _db.localDB.insert(nodeName, offlineObj.toJson());
+    final insertFuture = _db.localDB.insert(
+      nodeName,
+      offlineObj.toJson(),
+      adapter.idFieldName,
+    );
+
+    final pushFuture = _pushLocalObject(offlineObj);
+    await Future.wait([pushFuture, insertFuture]);
   }
 
   Future<void> _update(OfflineObject<T> object) async {
@@ -154,12 +186,14 @@ abstract class OfflineNode<T extends Object> {
     );
   }
 
-  Future<void> _mergeRemoteItems(OfflineObjects<T> remoteObjects) async {
-    final allLocal = await _getAll(includeDeleted: true);
-    final localMap = {for (var obj in allLocal) adapter.getId(obj.item): obj};
+  Future<void> _mergeRemoteItems(OfflineObjects remoteObjects) async {
+    final OfflineObjects<T> allLocal = await _getAll(includeDeleted: true);
+    final Map<String, OfflineObject<T>> localMap = {
+      for (var obj in allLocal) adapter.getId(obj.item): obj,
+    };
 
-    for (var remoteObj in remoteObjects) {
-      final remoteId = adapter.getId(remoteObj.item);
+    for (final OfflineObject remoteObj in remoteObjects) {
+      final remoteId = adapter.getId(remoteObj.item as T);
       final localObj = localMap[remoteId];
 
       if (remoteObj.isDeleted) {
@@ -170,7 +204,11 @@ abstract class OfflineNode<T extends Object> {
       }
 
       if (localObj == null) {
-        await _db.localDB.insert(nodeName, remoteObj.toJson());
+        await _db.localDB.insert(
+          nodeName,
+          remoteObj.toJson(),
+          adapter.idFieldName,
+        );
         continue;
       }
 
@@ -186,7 +224,7 @@ abstract class OfflineNode<T extends Object> {
     }
   }
 
-  Future<List<OfflineObject<T>>> _getPendingObjects() async {
+  Future<List<OfflineObject<T>>> getPendingObjects() async {
     final allObjects = await _getAll(includeDeleted: true);
     return allObjects.where((obj) => obj.needSync).toList();
   }
@@ -208,14 +246,14 @@ abstract class OfflineNode<T extends Object> {
   }
 
   Future<void> _updateObjectsStatus(
-    OfflineObjects objs, [
+    OfflineObjects objects, [
     OfflineObject Function(OfflineObject obj)? onChange,
   ]) async {
-    for (var obj in objs) {
+    for (OfflineObject object in objects) {
       if (onChange != null) {
-        obj = onChange(obj);
+        object = onChange(object);
       }
-      await _updateObjectStatus(obj);
+      await _updateObjectStatus(object);
     }
   }
 
@@ -243,6 +281,8 @@ abstract class OfflineNode<T extends Object> {
     }
     return _offlineObjectFromJson(json);
   }
+
+  T fromJson(Map<String, dynamic> json) => adapter.fromJson(json);
 }
 
 final class _OfflineNode<T extends Object> extends OfflineNode<T> {

@@ -1,4 +1,4 @@
-part of '../offline_db.dart';
+part of '../../offline_db.dart';
 
 /// Abstract adapter for serializing and deserializing objects.
 ///
@@ -19,6 +19,10 @@ part of '../offline_db.dart';
 /// }
 /// ```
 abstract class OfflineAdapter<T extends Object> {
+  final String idFieldName;
+
+  OfflineAdapter({this.idFieldName = 'id'});
+
   /// Gets the unique identifier from an item.
   String getId(T item);
 
@@ -34,6 +38,11 @@ abstract class OfflineAdapter<T extends Object> {
 
   /// Creates an item from JSON format.
   T fromJson(Map<String, dynamic> json);
+
+  OfflineObject<T>? resolveConflict(
+    OfflineObject<T> local,
+    OfflineObject<T> remote,
+  );
 }
 
 /// A simple adapter implementation using function callbacks.
@@ -75,4 +84,12 @@ class SimpleAdapter<T extends Object> extends OfflineAdapter<T> {
 
   @override
   T fromJson(Map<String, dynamic> json) => _fromJson(json);
+
+  @override
+  OfflineObject<T>? resolveConflict(
+    OfflineObject<T> local,
+    OfflineObject<T> remote,
+  ) {
+    return remote;
+  }
 }

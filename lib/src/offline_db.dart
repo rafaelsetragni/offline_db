@@ -1,15 +1,5 @@
 part of '../offline_db.dart';
 
-/// Callback function type for pushing local changes to the server.
-///
-/// Receives a map containing all pending changes grouped by node name.
-typedef PushCallback = Future<void> Function(Map<String, dynamic> objects);
-
-/// Callback function type for pulling remote changes from the server.
-///
-/// Receives the last sync timestamp and should return a map with server changes.
-typedef PullCallback = Future<Map<String, dynamic>> Function(DateTime? since);
-
 /// The central class that manages all nodes and coordinates synchronization.
 ///
 /// This class is responsible for:
@@ -21,6 +11,11 @@ class OfflineDB {
   static OfflineDB? _instance;
   late final List<OfflineNode> _nodes;
   final OfflineLocalDBDelegate _localDB;
+
+  final List<DataSyncStrategy> syncStrategies;
+  static final Completer _onInitialize = Completer();
+
+  static Future get awaitInitialization => _onInitialize.future;
 
   /// Gets the singleton instance of OfflineDB.
   ///
@@ -48,13 +43,19 @@ class OfflineDB {
   OfflineDB({
     required List<OfflineNode> nodes,
     required OfflineLocalDBDelegate localDB,
-  }) : _localDB = localDB {
+    required this.syncStrategies,
+  }) : assert(
+         syncStrategies.isNotEmpty,
+         'You need to provide at least one sync strategy.',
+       ),
+       _localDB = localDB {
     final names = nodes.map((n) => n.nodeName).toSet();
     if (names.length != nodes.length) {
       throw ArgumentError('Duplicate node names');
     }
     for (var node in nodes) {
       node._db = this;
+      node._syncStrategies = syncStrategies;
     }
 
     _nodes = List.unmodifiable(nodes);
@@ -78,6 +79,7 @@ class OfflineDB {
     for (var node in _nodes) {
       await node.initialize();
     }
+    _onInitialize.complete();
   }
 
   /// Clears all data from the local database.
@@ -93,22 +95,6 @@ class OfflineDB {
     }
   }
 
-  /// Performs bidirectional synchronization with the server.
-  ///
-  /// First pulls remote changes from the server, then pushes
-  /// pending local changes.
-  ///
-  /// Parameters:
-  /// - [onPush]: Callback to send local changes to the server
-  /// - [onPull]: Callback to fetch remote changes from the server
-  Future<void> sync({
-    required PushCallback onPush,
-    required PullCallback onPull,
-  }) async {
-    await _pullRemoteChanges(onPull);
-    await _pushPendingChanges(onPush);
-  }
-
   /// Disposes the OfflineDB instance and closes the local database.
   ///
   /// Call this when you're done using the OfflineDB instance.
@@ -116,59 +102,24 @@ class OfflineDB {
     await _localDB.close();
   }
 
-  Future<void> _pushPendingChanges(PushCallback onPush) async {
-    final pushMap = <String, dynamic>{};
-    final pendingObjects = <OfflineNode, List<OfflineObject>>{};
+  Future<void> _pullRemoteChanges(Map<String, dynamic> map) async {
+    final OfflineResponse response = await _buildOfflineResponse(map);
 
-    for (var node in _nodes) {
-      final offlineObjects = await node._getPendingObjects();
-      if (offlineObjects.isEmpty) continue;
-      pendingObjects[node] = offlineObjects;
-      pushMap[node.nodeName] = offlineObjects.toJson();
+    for (final MapEntry<OfflineNode, OfflineObjects> entry
+        in response.changes.entries) {
+      final OfflineNode node = entry.key;
+      final OfflineObjects remoteObjects = entry.value;
+      await node._mergeRemoteItems(remoteObjects);
     }
 
-    if (pendingObjects.isEmpty) {
-      return;
-    }
-
-    try {
-      await onPush(pushMap);
-
-      for (var entry in pendingObjects.entries) {
-        final node = entry.key;
-        final objects = entry.value;
-        await node._updateObjectsStatus(
-          objects,
-          (obj) => obj.copyWith(status: SyncStatus.ok),
-        );
-      }
-    } catch (e) {
-      for (var entry in pendingObjects.entries) {
-        final node = entry.key;
-        final objects = entry.value;
-        await node._updateObjectsStatus(
-          objects,
-          (obj) => obj.copyWith(status: SyncStatus.failed),
-        );
-      }
-    }
+    await _setLastSyncAt(response.timestamp);
   }
 
-  Future<void> _pullRemoteChanges(PullCallback onPull) async {
-    try {
-      final lastSyncAt = await _getLastSyncAt();
-      final map = await onPull(lastSyncAt);
-      final response = await _buildOfflineResponse(map);
-
-      for (var node in response.changes.keys) {
-        final objects = response.changes[node]!;
-        await node._mergeRemoteItems(objects);
-      }
-
-      await _setLastSyncAt(response.timestamp);
-    } catch (e) {
-      rethrow;
-    }
+  Future<OfflineObjects> getAllPendingObjects() async {
+    final results = await Future.wait([
+      for (var node in _nodes) node.getPendingObjects(),
+    ]);
+    return results.expand((e) => e).toList();
   }
 
   Future<DateTime?> _getLastSyncAt() async {
