@@ -63,11 +63,18 @@ class SimpleAdapter<T extends Object> extends OfflineAdapter<T> {
   final Map<String, dynamic> Function(T item) _toJson;
   final T Function(Map<String, dynamic> json) _fromJson;
 
+  final OfflineObject<T>? Function(
+    OfflineObject<T> local,
+    OfflineObject<T> remote,
+  )
+  onConflict;
+
   SimpleAdapter({
     required String Function(T item) getId,
     T Function(T item, String id)? setId,
     required Map<String, dynamic> Function(T item) toJson,
     required T Function(Map<String, dynamic> json) fromJson,
+    required this.onConflict,
   }) : _getId = getId,
        _setId = setId,
        _toJson = toJson,
@@ -89,7 +96,5 @@ class SimpleAdapter<T extends Object> extends OfflineAdapter<T> {
   OfflineObject<T>? resolveConflict(
     OfflineObject<T> local,
     OfflineObject<T> remote,
-  ) {
-    return remote;
-  }
+  ) => onConflict(local, remote);
 }
