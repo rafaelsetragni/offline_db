@@ -21,11 +21,18 @@ class HiveOfflineDelegate implements OfflineLocalDBDelegate {
   /// Custom path (useful for testing)
   final String? customPath;
 
+  /// Namespace used to isolate data per user/session.
+  String _namespace;
+
+  String get namespace => _namespace;
+
   /// Creates a new HiveOfflineDelegate.
   ///
   /// Parameters:
   /// - [customPath]: Optional custom path for Hive storage (useful for tests)
-  HiveOfflineDelegate({this.customPath});
+  /// - [namespace]: Optional namespace to isolate boxes (one per user)
+  HiveOfflineDelegate({this.customPath, String? namespace})
+      : _namespace = namespace ?? 'default';
 
   @override
   Future<void> initialize() async {
@@ -39,7 +46,7 @@ class HiveOfflineDelegate implements OfflineLocalDBDelegate {
     }
 
     // Open metadata box
-    _metadataBox = await Hive.openBox<int>('_offline_metadata');
+    _metadataBox = await Hive.openBox<int>(_metadataBoxName);
 
     _initialized = true;
   }
@@ -48,17 +55,35 @@ class HiveOfflineDelegate implements OfflineLocalDBDelegate {
   Future<void> close() async {
     if (!_initialized) return;
 
-    // Close all open boxes
-    for (var box in _boxes.values) {
-      await box.close();
-    }
-    _boxes.clear();
-
-    // Close metadata box
+    await _closeAllBoxes();
     await _metadataBox.close();
 
     _initialized = false;
   }
+
+  /// Changes the active namespace, closing any open boxes.
+  Future<void> useNamespace(String namespace) async {
+    if (_namespace == namespace) return;
+    _namespace = namespace;
+
+    if (!_initialized) return;
+
+    await _closeAllBoxes();
+    _boxes.clear();
+    await _metadataBox.close();
+    _metadataBox = await Hive.openBox<int>(_metadataBoxName);
+  }
+
+  Future<void> _closeAllBoxes() async {
+    for (var box in _boxes.values) {
+      await box.close();
+    }
+    _boxes.clear();
+  }
+
+  String get _metadataBoxName => '${_namespace}__offline_metadata';
+
+  String _boxName(String tableName) => '${_namespace}__$tableName';
 
   /// Gets or creates a box for the table.
   Future<Box<Map<dynamic, dynamic>>> _getBox(String tableName) async {
@@ -73,7 +98,7 @@ class HiveOfflineDelegate implements OfflineLocalDBDelegate {
     }
 
     // Open box and store in cache
-    final box = await Hive.openBox<Map>(tableName);
+    final box = await Hive.openBox<Map>(_boxName(tableName));
     _boxes[tableName] = box;
     return box;
   }
@@ -164,7 +189,9 @@ class HiveOfflineDelegate implements OfflineLocalDBDelegate {
     }
 
     // Lista de todos os boxes para deletar
-    final boxesToDelete = <String>[..._boxes.keys];
+    final boxesToDelete = <String>[
+      for (final entry in _boxes.keys) _boxName(entry),
+    ];
 
     // Limpa conteúdo de todos os boxes abertos
     for (var box in _boxes.values) {
@@ -194,7 +221,7 @@ class HiveOfflineDelegate implements OfflineLocalDBDelegate {
 
     // Deleta metadata box do disco
     try {
-      await Hive.deleteBoxFromDisk('_offline_metadata', path: customPath);
+      await Hive.deleteBoxFromDisk(_metadataBoxName, path: customPath);
     } catch (e) {
       // Ignora erros se box não existir
     }
