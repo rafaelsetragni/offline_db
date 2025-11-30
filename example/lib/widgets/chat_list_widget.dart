@@ -12,13 +12,17 @@ class ChatListWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView.separated(
       itemCount: chats.length,
+      padding: const EdgeInsets.symmetric(horizontal: 20),
       itemBuilder: (context, index) {
         final chat = chats[index];
-        final hasAvatar = chat.avatarUrl != null && chat.avatarUrl!.isNotEmpty;
+        final avatarUrl = chat.avatarUrl;
+        final hasAvatar = avatarUrl?.isNotEmpty ?? false;
 
         return ListTile(
           leading: CircleAvatar(
-            backgroundImage: hasAvatar ? NetworkImage(chat.avatarUrl!) : null,
+            backgroundImage: avatarUrl != null && hasAvatar
+                ? NetworkImage(avatarUrl)
+                : null,
             child: !hasAvatar && chat.title.isNotEmpty
                 ? Text(chat.title[0].toUpperCase())
                 : null,
@@ -32,10 +36,7 @@ class ChatListWidget extends StatelessWidget {
           },
         );
       },
-      separatorBuilder: (context, index) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Divider(color: Colors.black12),
-      ),
+      separatorBuilder: (context, index) => Divider(color: Colors.black12),
     );
   }
 }

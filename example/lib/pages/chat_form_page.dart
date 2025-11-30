@@ -32,7 +32,7 @@ class _ChatFormPageState extends State<ChatFormPage> {
     super.dispose();
   }
 
-  void _createChat() {
+  void _createChat() async {
     final currentState = _formKey.currentState;
     if (currentState == null || !currentState.validate()) return;
 

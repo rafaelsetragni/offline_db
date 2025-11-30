@@ -1,8 +1,10 @@
+import 'package:awesome_task_manager/awesome_task_manager.dart';
 import 'package:example/models/chat_model.dart';
 import 'package:example/models/message_model.dart';
 import 'package:example/nodes/chat_node.dart';
 import 'package:example/nodes/message_node.dart';
 import 'package:example/services/router_service.dart';
+import 'package:example/services/task_service.dart';
 import 'package:example/sync_strategies/periodic_sync_strategy.dart';
 import 'package:offline_db/offline_db.dart';
 
@@ -11,6 +13,7 @@ import '../models/user_model.dart';
 import '../nodes/user_node.dart';
 
 class ChatService {
+  static const tag = 'ChatService';
   static ChatService? _instance;
 
   factory ChatService({
@@ -24,6 +27,7 @@ class ChatService {
   );
 
   OfflineDB? offlineDB;
+  TaskService taskService;
 
   UserModel? authenticatedUser;
 
@@ -35,7 +39,9 @@ class ChatService {
     ChatNode? chatNode,
     UserNode? userNode,
     MessageNode? messageNode,
-  }) : chatNode = chatNode ?? ChatNode(),
+    TaskService? taskService,
+  }) : taskService = taskService ?? TaskService(),
+       chatNode = chatNode ?? ChatNode(),
        messageNode = messageNode ?? MessageNode(),
        userNode = userNode ?? UserNode();
 
@@ -88,20 +94,6 @@ class ChatService {
     return results.isNotEmpty ? results.first : null;
   }
 
-  void sendMessage({required String chatId, required String content}) {
-    if (authenticatedUser == null) {
-      throw Exception('User not authenticated');
-    }
-
-    final message = MessageModel(
-      chatId: chatId,
-      username: authenticatedUser!.username,
-      content: content,
-      state: MessageState.pending,
-    );
-    messageNode.upsert(message);
-  }
-
   Future<OfflineObject<UserModel>?> getUserByUsername(String username) async {
     final results = await userNode
         .query()
@@ -110,8 +102,42 @@ class ChatService {
     return results.isNotEmpty ? results.first : null;
   }
 
+  Stream<List<OfflineObject<MessageModel>>> getChatMessageStream({
+    required String chatId,
+  }) {
+    return messageNode
+        .query()
+        .where('chat_id', isEqualTo: chatId)
+        .orderBy('createdAt')
+        .watch();
+  }
+
+  Future<TaskResult> sendMessage({
+    required String chatId,
+    required String content,
+  }) {
+    return taskService.createTask(tag, 'sendMessage', (
+      TaskStatus taskStatus,
+    ) async {
+      final username = authenticatedUser?.username;
+      if (username == null) {
+        throw Exception('User not authenticated');
+      }
+
+      final message = MessageModel(
+        chatId: chatId,
+        username: username,
+        content: content,
+        state: MessageState.pending,
+      );
+
+      messageNode.upsert(message);
+      return message;
+    });
+  }
+
   void createChat({required String title, required String? avatarUrl}) {
     final newChat = ChatModel(title: title, avatarUrl: avatarUrl);
-    ChatService().chatNode.upsert(newChat);
+    chatNode.upsert(newChat);
   }
 }
