@@ -10,10 +10,12 @@ dependencies:
   flutter:
     sdk: flutter
   intl: ^0.20.2
+  
   offline_db:
     path: ../
 
   redis: ^4.0.0
+  awesome_task_manager: ^2.0.0
 
 dev_dependencies:
   flutter_test:
