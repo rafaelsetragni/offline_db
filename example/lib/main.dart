@@ -153,6 +153,10 @@ class _MyHomePageState extends State<MyHomePage> {
     await _counterService.addLog(1);
   }
 
+  Future<void> _decrementCounter() async {
+    await _counterService.addLog(-1);
+  }
+
   @override
   void dispose() {
     _logsSubscription?.cancel();
@@ -335,12 +339,12 @@ class _MyHomePageState extends State<MyHomePage> {
                                         CrossAxisAlignment.start,
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      Text(
-                                        'Increased by ${log.item.increment} by ${log.item.username}',
-                                        style: Theme.of(
-                                          context,
-                                        ).textTheme.bodyMedium,
-                                      ),
+                                    Text(
+                                      '${log.item.increment >= 0 ? 'Increased' : 'Decreased'} by ${log.item.increment.abs()} by ${log.item.username}',
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.bodyMedium,
+                                    ),
                                       Text(
                                         formattedDate,
                                         style: Theme.of(context)
@@ -364,10 +368,21 @@ class _MyHomePageState extends State<MyHomePage> {
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FloatingActionButton(
+            onPressed: _incrementCounter,
+            tooltip: 'Increment',
+            child: const Icon(Icons.add),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton(
+            onPressed: _decrementCounter,
+            tooltip: 'Decrement',
+            child: const Icon(Icons.remove),
+          ),
+        ],
       ),
     );
   }
