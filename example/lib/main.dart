@@ -147,7 +147,10 @@ class _MyHomePageState extends State<MyHomePage> {
   late final String _username;
   late final String _avatarUrl;
   StreamSubscription<List<OfflineObject<CounterLogModel>>>? _logsSubscription;
-  List<OfflineObject<CounterLogModel>> _recentLogs = const [];
+  List<OfflineObject<CounterLogModel>> _recentLogs = [];
+  final Map<String, String?> _userAvatars = {};
+  final GlobalKey<AnimatedListState> _logListKey =
+      GlobalKey<AnimatedListState>();
 
   Future<void> _incrementCounter() async {
     await _counterService.addLog(1);
@@ -200,18 +203,150 @@ class _MyHomePageState extends State<MyHomePage> {
         .query()
         .orderBy('created_at', descending: true)
         .watch()
-        .listen((logs) {
+        .listen((logs) async {
           final total = logs.fold<int>(
             0,
             (sum, log) => sum + log.item.increment,
           );
+          final recent = logs.take(5).toList();
+          final missingUsernames = recent
+              .map((log) => log.item.username)
+              .where((username) => !_userAvatars.containsKey(username))
+              .toSet();
+
+          Map<String, String?> avatars = {};
+          if (missingUsernames.isNotEmpty) {
+            avatars = await _counterService.getAvatarsForUsers(
+              missingUsernames,
+            );
+          }
+
           if (!mounted) return;
           setState(() {
             _counter = total;
             _counterFuture = Future.value(total);
-            _recentLogs = logs.take(5).toList();
+            if (avatars.isNotEmpty) _userAvatars.addAll(avatars);
           });
+
+          _updateRecentLogs(recent);
         });
+  }
+
+  void _updateRecentLogs(List<OfflineObject<CounterLogModel>> recent) {
+    final listKey = _logListKey.currentState;
+    if (listKey == null) {
+      setState(() {
+        _recentLogs = recent;
+      });
+      return;
+    }
+
+    if (_recentLogs.isEmpty && recent.isNotEmpty) {
+      for (var i = recent.length - 1; i >= 0; i--) {
+        _recentLogs.insert(0, recent[i]);
+        listKey.insertItem(0);
+      }
+      return;
+    }
+
+    if (recent.isEmpty) {
+      for (var i = _recentLogs.length - 1; i >= 0; i--) {
+        final removed = _recentLogs.removeAt(i);
+        listKey.removeItem(
+          i,
+          (context, animation) => _buildAnimatedLogTile(removed, animation),
+        );
+      }
+      return;
+    }
+
+    final newHeadId = recent.first.item.id;
+    final currentHeadId = _recentLogs.isNotEmpty
+        ? _recentLogs.first.item.id
+        : null;
+
+    if (newHeadId != currentHeadId) {
+      _recentLogs.insert(0, recent.first);
+      listKey.insertItem(0);
+      if (_recentLogs.length > 5) {
+        final removed = _recentLogs.removeLast();
+        listKey.removeItem(
+          _recentLogs.length,
+          (context, animation) => _buildAnimatedLogTile(removed, animation),
+        );
+      }
+    }
+
+    for (var i = 1; i < recent.length && i < _recentLogs.length; i++) {
+      _recentLogs[i] = recent[i];
+    }
+
+    while (_recentLogs.length > recent.length) {
+      final removed = _recentLogs.removeLast();
+      listKey.removeItem(
+        _recentLogs.length,
+        (context, animation) => _buildAnimatedLogTile(removed, animation),
+      );
+    }
+
+    for (var i = _recentLogs.length; i < recent.length; i++) {
+      _recentLogs.insert(i, recent[i]);
+      listKey.insertItem(i);
+    }
+  }
+
+  Widget _buildAnimatedLogTile(
+    OfflineObject<CounterLogModel> log,
+    Animation<double> animation,
+  ) {
+    return SizeTransition(
+      sizeFactor: animation,
+      child: FadeTransition(opacity: animation, child: _buildLogTile(log)),
+    );
+  }
+
+  Widget _buildLogTile(OfflineObject<CounterLogModel> log) {
+    final createdAt = log.item.createdAt;
+    final formattedDate =
+        '${createdAt.day.toString().padLeft(2, '0')}/${createdAt.month.toString().padLeft(2, '0')}/${createdAt.year} '
+        '${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}';
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CircleAvatar(
+            radius: 14,
+            backgroundImage: (_userAvatars[log.item.username] ?? '').isNotEmpty
+                ? NetworkImage(_userAvatars[log.item.username]!)
+                : null,
+            child: (_userAvatars[log.item.username] ?? '').isEmpty
+                ? const Icon(Icons.person, size: 16)
+                : null,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '${log.item.increment >= 0 ? 'Increased' : 'Decreased'} by ${log.item.increment.abs()} by ${log.item.username}',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                Text(
+                  formattedDate,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -304,62 +439,13 @@ class _MyHomePageState extends State<MyHomePage> {
                           Rect.fromLTWH(0, 0, rect.width, rect.height),
                         ),
                     blendMode: BlendMode.dstIn,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        ..._recentLogs.take(5).map((log) {
-                          final createdAt = log.item.createdAt;
-                          final formattedDate =
-                              '${createdAt.day.toString().padLeft(2, '0')}/${createdAt.month.toString().padLeft(2, '0')}/${createdAt.year} '
-                              '${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}';
-
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 4.0),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                CircleAvatar(
-                                  radius: 14,
-                                  backgroundImage:
-                                      (log.item.username.isNotEmpty &&
-                                          _avatarUrl.isNotEmpty)
-                                      ? NetworkImage(_avatarUrl)
-                                      : null,
-                                  child:
-                                      (log.item.username.isEmpty ||
-                                          _avatarUrl.isEmpty)
-                                      ? const Icon(Icons.person, size: 16)
-                                      : null,
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text(
-                                        '${log.item.increment >= 0 ? 'Increased' : 'Decreased'} by ${log.item.increment.abs()} by ${log.item.username}',
-                                        style: Theme.of(
-                                          context,
-                                        ).textTheme.bodyMedium,
-                                      ),
-                                      Text(
-                                        formattedDate,
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodySmall
-                                            ?.copyWith(color: Colors.grey[600]),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        }),
-                      ],
+                    child: AnimatedList(
+                      key: _logListKey,
+                      initialItemCount: _recentLogs.length,
+                      itemBuilder: (context, index, animation) {
+                        final log = _recentLogs[index];
+                        return _buildAnimatedLogTile(log, animation);
+                      },
                     ),
                   ),
                 ),
@@ -441,7 +527,7 @@ class CounterService {
        syncStrategy =
            syncStrategy ??
            MongoPeriodicSyncStrategy(
-             period: const Duration(seconds: 5),
+             period: const Duration(milliseconds: 500),
              mongoApi:
                  mongoApi ??
                  MongoApi(
@@ -463,23 +549,34 @@ class CounterService {
         );
 
     await offlineDB.initialize();
-    return await restoreLastUser();
+    final restored = await restoreLastUser();
+    return restored;
   }
 
   Future<void> signIn({
     required String username,
     required String? avatarUrl,
   }) async {
+    syncStrategy.stop();
     await _switchUserDatabase(username);
+    final existing = await userNode
+        .query()
+        .where('username', isEqualTo: username)
+        .getAll();
+    final preservedAvatar = existing.isNotEmpty
+        ? existing.first.item.avatarUrl
+        : null;
     final user = authenticatedUser = UserModel(
       username: username,
-      avatarUrl: avatarUrl,
+      avatarUrl: avatarUrl ?? preservedAvatar,
     );
     await userNode.upsert(user);
     await _persistLastUsername(username);
+    syncStrategy.start();
   }
 
   Future<void> signOut() async {
+    syncStrategy.stop();
     authenticatedUser = null;
     await _switchUserDatabase('');
     final prefs = await SharedPreferences.getInstance();
@@ -494,6 +591,7 @@ class CounterService {
         .getAll();
     if (results.isEmpty) return null;
     authenticatedUser = results.first.item;
+    syncStrategy.start();
     return authenticatedUser;
   }
 
@@ -518,6 +616,24 @@ class CounterService {
         .query()
         .orderBy('created_at', descending: true)
         .getAll();
+  }
+
+  Future<Map<String, String?>> getAvatarsForUsers(Set<String> usernames) async {
+    if (usernames.isEmpty) return {};
+    final results = await userNode
+        .query()
+        .where('username', whereIn: usernames.toList())
+        .getAll();
+
+    final map = <String, String?>{
+      for (final user in results) user.item.username: user.item.avatarUrl,
+    };
+
+    for (final username in usernames) {
+      map.putIfAbsent(username, () => null);
+    }
+
+    return map;
   }
 
   Future<void> addLog(int increment) async {
@@ -600,7 +716,22 @@ class UserAdapter extends OfflineAdapter<UserModel> {
     OfflineObject<UserModel> local,
     OfflineObject<UserModel> remote,
   ) {
-    return local.item.updatedAt.isAfter(remote.item.updatedAt) ? local : remote;
+    if (local.item.updatedAt == remote.item.updatedAt) return remote;
+
+    final preferred = local.item.updatedAt.isAfter(remote.item.updatedAt)
+        ? local
+        : remote;
+
+    final fallback = identical(preferred, local) ? remote : local;
+    final avatarUrl = preferred.item.avatarUrl ?? fallback.item.avatarUrl;
+    return preferred.copyWith(
+      item: UserModel(
+        username: preferred.item.username,
+        avatarUrl: avatarUrl,
+        createdAt: preferred.item.createdAt,
+        updatedAt: preferred.item.updatedAt,
+      ),
+    );
   }
 }
 
@@ -803,9 +934,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   DateTime? lastSyncedAt;
   final Map<String, List<OfflineObject>> pendingChanges = {};
 
-  MongoPeriodicSyncStrategy({required this.period, required this.mongoApi}) {
-    start();
-  }
+  MongoPeriodicSyncStrategy({required this.period, required this.mongoApi});
 
   void start() {
     stop();
@@ -821,6 +950,8 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   void stop() {
     _timer?.cancel();
     _timer = null;
+    pendingChanges.clear();
+    lastSyncedAt = null;
   }
 
   void dispose() {
