@@ -410,7 +410,7 @@ class _MyHomePageState extends State<MyHomePage> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                const Text('Users have pushed the button this many times:'),
+                const Text('Global counter updated by all users:'),
                 FutureBuilder<int>(
                   future: _counterFuture,
                   builder: (context, snapshot) {
