@@ -203,15 +203,8 @@ class _MyHomePageState extends State<MyHomePage> {
 
   void _listenCounterLogs() {
     _logsSubscription?.cancel();
-    _logsSubscription = _counterService.counterLogNode
-        .query()
-        .orderBy('created_at', descending: true)
-        .watch()
-        .listen((logs) async {
-          final total = logs.fold<int>(
-            0,
-            (sum, log) => sum + log.item.increment,
-          );
+    _logsSubscription = _counterService.watchLogs().listen((logs) async {
+          final total = logs.fold<int>(0, (sum, log) => sum + log.item.increment);
           final recent = logs.take(5).toList();
           final missingUsernames = recent
               .map((log) => log.item.username)
@@ -238,11 +231,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
   void _listenUsers() {
     _usersSubscription?.cancel();
-    _usersSubscription = _counterService.userNode
-        .query()
-        .orderBy('username')
-        .watch()
-        .listen((users) {
+    _usersSubscription = _counterService.watchUsers().listen((users) {
       if (!mounted) return;
       final updatedAvatars = {
         for (final user in users) user.item.username: user.item.avatarUrl
@@ -679,6 +668,17 @@ class CounterService {
         .query()
         .orderBy('created_at', descending: true)
         .getAll();
+  }
+
+  Stream<List<OfflineObject<CounterLogModel>>> watchLogs() {
+    return counterLogNode
+        .query()
+        .orderBy('created_at', descending: true)
+        .watch();
+  }
+
+  Stream<List<OfflineObject<UserModel>>> watchUsers() {
+    return userNode.query().orderBy('username').watch();
   }
 
   Future<Map<String, String?>> getAvatarsForUsers(Set<String> usernames) async {
