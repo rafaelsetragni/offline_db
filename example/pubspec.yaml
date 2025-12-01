@@ -4,7 +4,7 @@ publish_to: "none" #
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.9.2
+  sdk: ^3.10.0
 
 dependencies:
   flutter:
@@ -15,7 +15,9 @@ dependencies:
     path: ../
 
   redis: ^4.0.0
+  mongo_dart: ^0.10.0
   awesome_task_manager: ^2.0.0
+  shared_preferences: ^2.2.2
 
 dev_dependencies:
   flutter_test:
