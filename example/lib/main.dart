@@ -5,11 +5,13 @@ import 'package:mongo_dart/mongo_dart.dart' hide State, Center;
 import 'package:offline_db/offline_db.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-Future<void> main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  final signedUser = await CounterService().initialize();
-  final home = signedUser != null ? const MyHomePage() : const SignInPage();
-  runApp(MyApp(home: home));
+  CounterService().initialize().then((signedUser) {
+    runApp(
+      MyApp(home: signedUser != null ? const MyHomePage() : const SignInPage()),
+    );
+  });
 }
 
 class MyApp extends StatelessWidget {
@@ -21,6 +23,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Offline Counter',
+      navigatorKey: CounterService().navigatorKey,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
       ),
@@ -39,93 +42,72 @@ class SignInPage extends StatefulWidget {
 class _SignInPageState extends State<SignInPage> {
   final _formKey = GlobalKey<FormState>();
   final _usernameController = TextEditingController();
-  final _avatarUrlController = TextEditingController();
-  String _avatarUrl = '';
-
-  @override
-  void initState() {
-    super.initState();
-    _avatarUrlController.addListener(() {
-      setState(() {
-        _avatarUrl = _avatarUrlController.text;
-      });
-    });
-  }
 
   @override
   void dispose() {
     _usernameController.dispose();
-    _avatarUrlController.dispose();
     super.dispose();
   }
 
   Future<void> _signIn() async {
-    final formState = _formKey.currentState;
-    if (formState == null || !formState.validate()) return;
-
-    final username = _usernameController.text.trim();
-    final avatarUrl = _avatarUrlController.text.trim();
-
-    await CounterService().signIn(
-      username: username,
-      avatarUrl: avatarUrl.isEmpty ? null : avatarUrl,
-    );
-
-    if (!mounted) return;
-    Navigator.of(
-      context,
-    ).pushReplacement(MaterialPageRoute(builder: (_) => MyHomePage()));
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    final username = _usernameController.text;
+    await CounterService().signIn(username: username);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: const [
-            Text('Offline Counter'),
-            SizedBox(height: 4),
-            Text(
-              'Sign In',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w400),
-            ),
-          ],
-        ),
-      ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              AvatarPreview(avatarUrl: _avatarUrl),
-              const SizedBox(height: 20),
-              TextFormField(
-                controller: _usernameController,
-                decoration: const InputDecoration(
-                  labelText: 'Username',
-                  border: OutlineInputBorder(),
+        child: SafeArea(
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Text(
+                      'Offline Counter',
+                      style: TextTheme.of(context).headlineMedium,
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Sign In',
+                      style: TextTheme.of(context).labelLarge?.copyWith(
+                        color: ColorScheme.of(context).primary,
+                      ),
+                    ),
+                  ],
                 ),
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Please enter a username.';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _avatarUrlController,
-                decoration: const InputDecoration(
-                  labelText: 'Avatar URL (optional)',
-                  border: OutlineInputBorder(),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextFormField(
+                      controller: _usernameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Username',
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Please enter a username.';
+                        }
+                        return null;
+                      },
+                    ),
+                    SizedBox(height: 24),
+                    ElevatedButton(
+                      onPressed: _signIn,
+                      child: const Text('Sign In'),
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(height: 20),
-              ElevatedButton(onPressed: _signIn, child: const Text('Sign In')),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -145,7 +127,7 @@ class _MyHomePageState extends State<MyHomePage> {
   Future<int>? _counterFuture;
   final _counterService = CounterService();
   late final String _username;
-  late final String _avatarUrl;
+  String _avatarUrl = '';
   StreamSubscription<List<OfflineObject<CounterLogModel>>>? _logsSubscription;
   StreamSubscription<List<OfflineObject<UserModel>>>? _usersSubscription;
   List<OfflineObject<CounterLogModel>> _recentLogs = [];
@@ -162,6 +144,49 @@ class _MyHomePageState extends State<MyHomePage> {
     await _counterService.addLog(-1);
   }
 
+  Future<void> _onAvatarTap() async {
+    final url = await _promptAvatarDialog();
+    if (url == null) return;
+    final updated = await _counterService.updateAvatarUrl(url);
+    if (!mounted) return;
+    setState(() {
+      _avatarUrl = updated.avatarUrl ?? '';
+      _userAvatars[updated.username] = updated.avatarUrl;
+    });
+  }
+
+  Future<String?> _promptAvatarDialog() async {
+    final controller = TextEditingController(text: _avatarUrl);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Update avatar URL'),
+          content: TextField(
+            controller: controller,
+            decoration: const InputDecoration(
+              labelText: 'Avatar URL',
+              hintText: 'https://example.com/avatar.png',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(controller.text.trim());
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+    return result;
+  }
+
   @override
   void dispose() {
     _logsSubscription?.cancel();
@@ -176,9 +201,7 @@ class _MyHomePageState extends State<MyHomePage> {
     if (user == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const SignInPage()),
-        );
+        _counterService.navigateToSignIn();
       });
       _username = '';
       _avatarUrl = '';
@@ -204,29 +227,27 @@ class _MyHomePageState extends State<MyHomePage> {
   void _listenCounterLogs() {
     _logsSubscription?.cancel();
     _logsSubscription = _counterService.watchLogs().listen((logs) async {
-          final total = logs.fold<int>(0, (sum, log) => sum + log.item.increment);
-          final recent = logs.take(5).toList();
-          final missingUsernames = recent
-              .map((log) => log.item.username)
-              .where((username) => !_userAvatars.containsKey(username))
-              .toSet();
+      final total = logs.fold<int>(0, (sum, log) => sum + log.item.increment);
+      final recent = logs.take(5).toList();
+      final missingUsernames = recent
+          .map((log) => log.item.username)
+          .where((username) => !_userAvatars.containsKey(username))
+          .toSet();
 
-          Map<String, String?> avatars = {};
-          if (missingUsernames.isNotEmpty) {
-            avatars = await _counterService.getAvatarsForUsers(
-              missingUsernames,
-            );
-          }
+      Map<String, String?> avatars = {};
+      if (missingUsernames.isNotEmpty) {
+        avatars = await _counterService.getAvatarsForUsers(missingUsernames);
+      }
 
-          if (!mounted) return;
-          setState(() {
-            _counter = total;
-            _counterFuture = Future.value(total);
-            if (avatars.isNotEmpty) _userAvatars.addAll(avatars);
-          });
+      if (!mounted) return;
+      setState(() {
+        _counter = total;
+        _counterFuture = Future.value(total);
+        if (avatars.isNotEmpty) _userAvatars.addAll(avatars);
+      });
 
-          _updateRecentLogs(recent);
-        });
+      _updateRecentLogs(recent);
+    });
   }
 
   void _listenUsers() {
@@ -234,11 +255,19 @@ class _MyHomePageState extends State<MyHomePage> {
     _usersSubscription = _counterService.watchUsers().listen((users) {
       if (!mounted) return;
       final updatedAvatars = {
-        for (final user in users) user.item.username: user.item.avatarUrl
+        for (final user in users) user.item.username: user.item.avatarUrl,
       };
       setState(() {
         _users = users;
         _userAvatars.addAll(updatedAvatars);
+        String? newAvatar;
+        for (final user in users) {
+          if (user.item.username == _username) {
+            newAvatar = user.item.avatarUrl;
+            break;
+          }
+        }
+        _avatarUrl = newAvatar ?? _avatarUrl;
       });
     });
   }
@@ -374,10 +403,6 @@ class _MyHomePageState extends State<MyHomePage> {
             tooltip: 'Logout',
             onPressed: () async {
               await CounterService().signOut();
-              if (!mounted) return;
-              Navigator.of(context).pushReplacement(
-                MaterialPageRoute(builder: (_) => const SignInPage()),
-              );
             },
           ),
         ],
@@ -389,7 +414,13 @@ class _MyHomePageState extends State<MyHomePage> {
           children: [
             Column(
               children: [
-                AvatarPreview(avatarUrl: _avatarUrl),
+                GestureDetector(
+                  onTap: _onAvatarTap,
+                  child: AvatarPreview(
+                    avatarUrl: _avatarUrl,
+                    showEditIndicator: true,
+                  ),
+                ),
                 const SizedBox(height: 16),
                 Text(
                   'Hello, $_username!',
@@ -420,8 +451,10 @@ class _MyHomePageState extends State<MyHomePage> {
             SizedBox(
               height: MediaQuery.of(context).size.height * 0.15,
               child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 24.0, vertical: 8.0),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24.0,
+                  vertical: 8.0,
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -444,8 +477,8 @@ class _MyHomePageState extends State<MyHomePage> {
                                 radius: 22,
                                 backgroundImage:
                                     (user.item.avatarUrl ?? '').isNotEmpty
-                                        ? NetworkImage(user.item.avatarUrl!)
-                                        : null,
+                                    ? NetworkImage(user.item.avatarUrl!)
+                                    : null,
                                 child: (user.item.avatarUrl ?? '').isEmpty
                                     ? const Icon(Icons.person, size: 22)
                                     : null,
@@ -530,15 +563,44 @@ class _MyHomePageState extends State<MyHomePage> {
 
 class AvatarPreview extends StatelessWidget {
   final String avatarUrl;
-  const AvatarPreview({super.key, required this.avatarUrl});
+  final bool showEditIndicator;
+  const AvatarPreview({
+    super.key,
+    required this.avatarUrl,
+    this.showEditIndicator = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     final hasAvatar = avatarUrl.isNotEmpty;
-    return CircleAvatar(
-      radius: 50,
-      backgroundImage: hasAvatar ? NetworkImage(avatarUrl) : null,
-      child: hasAvatar ? null : const Icon(Icons.person, size: 50),
+    return Stack(
+      children: [
+        CircleAvatar(
+          radius: 50,
+          backgroundImage: hasAvatar ? NetworkImage(avatarUrl) : null,
+          child: hasAvatar ? null : const Icon(Icons.person, size: 50),
+        ),
+        if (showEditIndicator)
+          Positioned(
+            bottom: 4,
+            right: 4,
+            child: PhysicalModel(
+              color: Colors.transparent,
+              elevation: 4,
+              shadowColor: ColorScheme.of(context).shadow,
+              shape: BoxShape.circle,
+              child: CircleAvatar(
+                radius: 14,
+                backgroundColor: ColorScheme.of(context).primaryFixed,
+                child: Icon(
+                  Icons.edit,
+                  size: 16,
+                  color: ColorScheme.of(context).onPrimaryFixed,
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -547,6 +609,7 @@ class CounterService {
   static const tag = 'CounterService';
   static const _prefsLastUsername = 'offline_counter_last_username';
   static CounterService? _instance;
+  final navigatorKey = GlobalKey<NavigatorState>();
 
   factory CounterService({
     UserNode? userNode,
@@ -605,12 +668,10 @@ class CounterService {
     return restored;
   }
 
-  Future<void> signIn({
-    required String username,
-    required String? avatarUrl,
-  }) async {
+  Future<void> signIn({required String username}) async {
     syncStrategy.stop();
-    await _switchUserDatabase(username);
+    await _switchUserDatabase('');
+    await _syncRemoteUsersToLocal();
     final existing = await userNode
         .query()
         .where('username', isEqualTo: username)
@@ -620,11 +681,24 @@ class CounterService {
         : null;
     final user = authenticatedUser = UserModel(
       username: username,
-      avatarUrl: avatarUrl ?? preservedAvatar,
+      avatarUrl: preservedAvatar,
     );
     await userNode.upsert(user);
     await _persistLastUsername(username);
     syncStrategy.start();
+    navigateToHome();
+  }
+
+  Future<void> _syncRemoteUsersToLocal() async {
+    final remote = await syncStrategy.fetchUsers();
+    for (final data in remote) {
+      try {
+        final user = userNode.adapter.fromJson(data);
+        await userNode.upsert(user);
+      } catch (_) {
+        // ignore malformed user entries
+      }
+    }
   }
 
   Future<void> signOut() async {
@@ -633,6 +707,7 @@ class CounterService {
     await _switchUserDatabase('');
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_prefsLastUsername);
+    navigateToSignIn();
   }
 
   Future<UserModel?> restoreUser(String username) async {
@@ -645,6 +720,18 @@ class CounterService {
     authenticatedUser = results.first.item;
     syncStrategy.start();
     return authenticatedUser;
+  }
+
+  void navigateToHome() {
+    final nav = navigatorKey.currentState;
+    if (nav == null) return;
+    nav.pushReplacement(MaterialPageRoute(builder: (_) => const MyHomePage()));
+  }
+
+  void navigateToSignIn() {
+    final nav = navigatorKey.currentState;
+    if (nav == null) return;
+    nav.pushReplacement(MaterialPageRoute(builder: (_) => const SignInPage()));
   }
 
   Future<UserModel?> restoreLastUser() async {
@@ -697,6 +784,22 @@ class CounterService {
     }
 
     return map;
+  }
+
+  Future<UserModel> updateAvatarUrl(String avatarUrl) async {
+    final user = authenticatedUser;
+    if (user == null) throw Exception('User not authenticated');
+
+    final updated = UserModel(
+      username: user.username,
+      avatarUrl: avatarUrl.isEmpty ? null : avatarUrl,
+      createdAt: user.createdAt,
+      updatedAt: DateTime.now(),
+    );
+
+    await userNode.upsert(updated);
+    authenticatedUser = updated;
+    return updated;
   }
 
   Future<void> addLog(int increment) async {
@@ -775,7 +878,7 @@ class UserAdapter extends OfflineAdapter<UserModel> {
   }
 
   @override
-  OfflineObject<UserModel> resolveConflict(
+  OfflineObject<UserModel>? resolveConflict(
     OfflineObject<UserModel> local,
     OfflineObject<UserModel> remote,
   ) {
@@ -849,7 +952,7 @@ class CounterLogAdapter extends OfflineAdapter<CounterLogModel> {
   }
 
   @override
-  OfflineObject<CounterLogModel> resolveConflict(
+  OfflineObject<CounterLogModel>? resolveConflict(
     OfflineObject<CounterLogModel> local,
     OfflineObject<CounterLogModel> remote,
   ) {
@@ -859,6 +962,87 @@ class CounterLogAdapter extends OfflineAdapter<CounterLogModel> {
 
 class CounterLogNode extends OfflineNode<CounterLogModel> {
   CounterLogNode() : super('counter_log', adapter: CounterLogAdapter());
+}
+
+class MongoPeriodicSyncStrategy extends DataSyncStrategy {
+  final Duration period;
+  final MongoApi mongoApi;
+
+  Timer? _timer;
+  DateTime? lastSyncedAt;
+  final Map<String, List<OfflineObject>> pendingChanges = {};
+
+  MongoPeriodicSyncStrategy({required this.period, required this.mongoApi});
+
+  void start() {
+    stop();
+    OfflineDB.awaitInitialization.then((_) async {
+      final pendingObjects = await getPendingObjects();
+      for (final object in pendingObjects) {
+        _addPending(object);
+      }
+      _timer = Timer.periodic(period, _onTimerTick);
+    });
+  }
+
+  void stop() {
+    _timer?.cancel();
+    _timer = null;
+    pendingChanges.clear();
+    lastSyncedAt = null;
+  }
+
+  void dispose() {
+    stop();
+  }
+
+  void _addPending(OfflineObject object) {
+    pendingChanges.putIfAbsent(object.nodeName, () => []).add(object);
+  }
+
+  @override
+  Future<SyncStatus> onPushToRemote(OfflineObject object) async {
+    _addPending(object);
+    return SyncStatus.pending;
+  }
+
+  Future<void> _onTimerTick(_) async {
+    final changes = Map<String, List<OfflineObject>>.from(pendingChanges);
+    pendingChanges.clear();
+
+    await _pushToRemote(changes);
+    final remoteChanges = await mongoApi.pull(lastSyncedAt);
+    if (remoteChanges.isEmpty) return;
+
+    await pullChangesToLocal(remoteChanges);
+
+    final ts = remoteChanges['timestamp'];
+    if (ts is String) {
+      lastSyncedAt = DateTime.tryParse(ts) ?? DateTime.now();
+    } else {
+      lastSyncedAt = DateTime.now();
+    }
+  }
+
+  Future<void> _pushToRemote(Map<String, List<OfflineObject>> changes) async {
+    if (changes.isEmpty) return;
+    await mongoApi.push(_buildUploadPayload(changes));
+  }
+
+  Map<String, dynamic> _buildUploadPayload(
+    Map<String, List<OfflineObject<Object>>> changes,
+  ) {
+    return {
+      'lastSyncedAt': DateTime.now().toIso8601String(),
+      'changes': {
+        for (final entry in changes.entries) entry.key: entry.value.toJson(),
+      },
+    };
+  }
+
+  Future<List<Map<String, dynamic>>> fetchUsers() {
+    return mongoApi.fetchUsers();
+  }
 }
 
 class MongoApi {
@@ -987,81 +1171,28 @@ class MongoApi {
 
     return {'timestamp': timestamp.toIso8601String(), 'changes': changes};
   }
-}
 
-class MongoPeriodicSyncStrategy extends DataSyncStrategy {
-  final Duration period;
-  final MongoApi mongoApi;
+  Future<List<Map<String, dynamic>>> fetchUsers() async {
+    final collection = await _collection('user');
+    final cursor = collection.find(where.sortBy('createdAt'));
 
-  Timer? _timer;
-  DateTime? lastSyncedAt;
-  final Map<String, List<OfflineObject>> pendingChanges = {};
+    final users = <String, Map<String, dynamic>>{};
 
-  MongoPeriodicSyncStrategy({required this.period, required this.mongoApi});
-
-  void start() {
-    stop();
-    OfflineDB.awaitInitialization.then((_) async {
-      final pendingObjects = await getPendingObjects();
-      for (final object in pendingObjects) {
-        _addPending(object);
+    await cursor.forEach((doc) {
+      final op = doc['operation'];
+      if (op == 'delete') {
+        final id = doc['id'];
+        if (id is String) users.remove(id);
+        return;
       }
-      _timer = Timer.periodic(period, _onTimerTick);
+
+      final data = doc['data'];
+      if (data is! Map<String, dynamic>) return;
+      final username = data['username'];
+      if (username is! String) return;
+      users[username] = data;
     });
-  }
 
-  void stop() {
-    _timer?.cancel();
-    _timer = null;
-    pendingChanges.clear();
-    lastSyncedAt = null;
-  }
-
-  void dispose() {
-    stop();
-  }
-
-  void _addPending(OfflineObject object) {
-    pendingChanges.putIfAbsent(object.nodeName, () => []).add(object);
-  }
-
-  @override
-  Future<SyncStatus> onPushToRemote(OfflineObject object) async {
-    _addPending(object);
-    return SyncStatus.pending;
-  }
-
-  Future<void> _onTimerTick(_) async {
-    final changes = Map<String, List<OfflineObject>>.from(pendingChanges);
-    pendingChanges.clear();
-
-    await _pushToRemote(changes);
-    final remoteChanges = await mongoApi.pull(lastSyncedAt);
-    if (remoteChanges.isEmpty) return;
-
-    await pullChangesToLocal(remoteChanges);
-
-    final ts = remoteChanges['timestamp'];
-    if (ts is String) {
-      lastSyncedAt = DateTime.tryParse(ts) ?? DateTime.now();
-    } else {
-      lastSyncedAt = DateTime.now();
-    }
-  }
-
-  Future<void> _pushToRemote(Map<String, List<OfflineObject>> changes) async {
-    if (changes.isEmpty) return;
-    await mongoApi.push(_buildUploadPayload(changes));
-  }
-
-  Map<String, dynamic> _buildUploadPayload(
-    Map<String, List<OfflineObject<Object>>> changes,
-  ) {
-    return {
-      'lastSyncedAt': DateTime.now().toIso8601String(),
-      'changes': {
-        for (final entry in changes.entries) entry.key: entry.value.toJson(),
-      },
-    };
+    return users.values.toList();
   }
 }
