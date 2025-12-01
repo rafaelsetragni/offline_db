@@ -275,7 +275,7 @@ class _MyHomePageState extends State<MyHomePage> {
               ],
             ),
             Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 24.0),
@@ -339,12 +339,12 @@ class _MyHomePageState extends State<MyHomePage> {
                                         CrossAxisAlignment.start,
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                    Text(
-                                      '${log.item.increment >= 0 ? 'Increased' : 'Decreased'} by ${log.item.increment.abs()} by ${log.item.username}',
-                                      style: Theme.of(
-                                        context,
-                                      ).textTheme.bodyMedium,
-                                    ),
+                                      Text(
+                                        '${log.item.increment >= 0 ? 'Increased' : 'Decreased'} by ${log.item.increment.abs()} by ${log.item.username}',
+                                        style: Theme.of(
+                                          context,
+                                        ).textTheme.bodyMedium,
+                                      ),
                                       Text(
                                         formattedDate,
                                         style: Theme.of(context)
@@ -374,12 +374,14 @@ class _MyHomePageState extends State<MyHomePage> {
           FloatingActionButton(
             onPressed: _incrementCounter,
             tooltip: 'Increment',
+            heroTag: 'increment_fab',
             child: const Icon(Icons.add),
           ),
           const SizedBox(height: 12),
           FloatingActionButton(
             onPressed: _decrementCounter,
             tooltip: 'Decrement',
+            heroTag: 'decrement_fab',
             child: const Icon(Icons.remove),
           ),
         ],
