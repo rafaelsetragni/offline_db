@@ -14,6 +14,7 @@ void main() {
   });
 }
 
+/// Root widget configuring theme and navigation key.
 class MyApp extends StatelessWidget {
   final Widget home;
 
@@ -32,6 +33,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
+/// Simple sign-in form to capture the username.
 class SignInPage extends StatefulWidget {
   const SignInPage({super.key});
 
@@ -115,6 +117,7 @@ class _SignInPageState extends State<SignInPage> {
   }
 }
 
+/// Main screen showing counter, users, logs, and avatar editing.
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key});
 
@@ -561,6 +564,7 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 }
 
+/// Displays a user avatar with an optional edit badge overlay.
 class AvatarPreview extends StatelessWidget {
   final String avatarUrl;
   final bool showEditIndicator;
@@ -605,6 +609,7 @@ class AvatarPreview extends StatelessWidget {
   }
 }
 
+/// Central orchestrator for auth, persistence, sync, and navigation.
 class CounterService {
   static const tag = 'CounterService';
   static const _prefsLastUsername = 'offline_counter_last_username';
@@ -836,6 +841,7 @@ class CounterService {
   }
 }
 
+/// Domain model for a user with avatar metadata.
 class UserModel {
   final String username;
   final String? avatarUrl;
@@ -851,6 +857,7 @@ class UserModel {
        updatedAt = updatedAt ?? DateTime.now();
 }
 
+/// Maps UserModel to/from JSON and resolves conflicts.
 class UserAdapter extends OfflineAdapter<UserModel> {
   UserAdapter() : super(idFieldName: 'username');
 
@@ -901,10 +908,12 @@ class UserAdapter extends OfflineAdapter<UserModel> {
   }
 }
 
+/// OfflineDB node binding users to persistence and sync rules.
 class UserNode extends OfflineNode<UserModel> {
   UserNode() : super('user', adapter: UserAdapter());
 }
 
+/// Domain model for counter increment/decrement events.
 class CounterLogModel {
   final String id;
   final String username;
@@ -923,6 +932,7 @@ class CounterLogModel {
        updatedAt = updatedAt ?? DateTime.now();
 }
 
+/// Maps CounterLogModel to/from JSON and resolves conflicts.
 class CounterLogAdapter extends OfflineAdapter<CounterLogModel> {
   CounterLogAdapter() : super(idFieldName: 'id');
 
@@ -960,10 +970,12 @@ class CounterLogAdapter extends OfflineAdapter<CounterLogModel> {
   }
 }
 
+/// OfflineDB node for counter log entries.
 class CounterLogNode extends OfflineNode<CounterLogModel> {
   CounterLogNode() : super('counter_log', adapter: CounterLogAdapter());
 }
 
+/// Periodically syncs pending changes with MongoDB and pulls updates.
 class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   final Duration period;
   final MongoApi mongoApi;
@@ -1045,6 +1057,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   }
 }
 
+/// Low-level helper to push/pull changes against MongoDB.
 class MongoApi {
   final String uri;
   final List<String> nodeNames;
