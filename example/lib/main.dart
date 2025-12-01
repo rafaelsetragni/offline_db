@@ -147,7 +147,9 @@ class _MyHomePageState extends State<MyHomePage> {
   late final String _username;
   late final String _avatarUrl;
   StreamSubscription<List<OfflineObject<CounterLogModel>>>? _logsSubscription;
+  StreamSubscription<List<OfflineObject<UserModel>>>? _usersSubscription;
   List<OfflineObject<CounterLogModel>> _recentLogs = [];
+  List<OfflineObject<UserModel>> _users = [];
   final Map<String, String?> _userAvatars = {};
   final GlobalKey<AnimatedListState> _logListKey =
       GlobalKey<AnimatedListState>();
@@ -163,6 +165,7 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void dispose() {
     _logsSubscription?.cancel();
+    _usersSubscription?.cancel();
     super.dispose();
   }
 
@@ -184,6 +187,7 @@ class _MyHomePageState extends State<MyHomePage> {
       _avatarUrl = user.avatarUrl ?? '';
       _counterFuture = _loadCounter();
       _listenCounterLogs();
+      _listenUsers();
     }
   }
 
@@ -230,6 +234,24 @@ class _MyHomePageState extends State<MyHomePage> {
 
           _updateRecentLogs(recent);
         });
+  }
+
+  void _listenUsers() {
+    _usersSubscription?.cancel();
+    _usersSubscription = _counterService.userNode
+        .query()
+        .orderBy('username')
+        .watch()
+        .listen((users) {
+      if (!mounted) return;
+      final updatedAvatars = {
+        for (final user in users) user.item.username: user.item.avatarUrl
+      };
+      setState(() {
+        _users = users;
+        _userAvatars.addAll(updatedAvatars);
+      });
+    });
   }
 
   void _updateRecentLogs(List<OfflineObject<CounterLogModel>> recent) {
@@ -387,10 +409,7 @@ class _MyHomePageState extends State<MyHomePage> {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-              ],
-            ),
-            Column(
-              children: [
+                const SizedBox(height: 16),
                 const Text('Users have pushed the button this many times:'),
                 FutureBuilder<int>(
                   future: _counterFuture,
@@ -408,6 +427,50 @@ class _MyHomePageState extends State<MyHomePage> {
                   },
                 ),
               ],
+            ),
+            SizedBox(
+              height: MediaQuery.of(context).size.height * 0.15,
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24.0, vertical: 8.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      'Users:',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _users.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: 12),
+                        itemBuilder: (context, index) {
+                          final user = _users[index];
+                          return Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              CircleAvatar(
+                                radius: 22,
+                                backgroundImage:
+                                    (user.item.avatarUrl ?? '').isNotEmpty
+                                        ? NetworkImage(user.item.avatarUrl!)
+                                        : null,
+                                child: (user.item.avatarUrl ?? '').isEmpty
+                                    ? const Icon(Icons.person, size: 22)
+                                    : null,
+                              ),
+                              const SizedBox(height: 6),
+                              Text(user.item.username),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
             Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
