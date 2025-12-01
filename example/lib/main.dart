@@ -572,22 +572,50 @@ class MongoApi {
     return collection;
   }
 
-  Future<void> push(Map<String, dynamic> changes) async {
+  Future<void> push(Map<String, dynamic> payload) async {
+    final operationsByNode = payload['changes'];
+    if (operationsByNode is! Map<String, dynamic>) return;
+
     final now = DateTime.now();
-    for (final nodeName in changes.keys) {
-      final operations = changes[nodeName] as Map<String, dynamic>;
+    for (final entry in operationsByNode.entries) {
+      final nodeName = entry.key;
+      final operations = entry.value;
+      if (operations is! Map<String, dynamic>) continue;
       final inserts = <Map<String, dynamic>>[];
 
-      for (final item in (operations['insert'] as List? ?? [])) {
-        inserts.add({'operation': 'insert', 'data': item, 'createdAt': now});
+      final insertItems = operations['insert'];
+      if (insertItems is List) {
+        for (final item in insertItems) {
+          if (item is Map<String, dynamic>) {
+            inserts.add({
+              'operation': 'insert',
+              'data': item,
+              'createdAt': now,
+            });
+          }
+        }
       }
 
-      for (final item in (operations['update'] as List? ?? [])) {
-        inserts.add({'operation': 'update', 'data': item, 'createdAt': now});
+      final updateItems = operations['update'];
+      if (updateItems is List) {
+        for (final item in updateItems) {
+          if (item is Map<String, dynamic>) {
+            inserts.add({
+              'operation': 'update',
+              'data': item,
+              'createdAt': now,
+            });
+          }
+        }
       }
 
-      for (final id in (operations['delete'] as List? ?? [])) {
-        inserts.add({'operation': 'delete', 'id': id, 'createdAt': now});
+      final deleteItems = operations['delete'];
+      if (deleteItems is List) {
+        for (final id in deleteItems) {
+          if (id != null) {
+            inserts.add({'operation': 'delete', 'id': id, 'createdAt': now});
+          }
+        }
       }
 
       if (inserts.isNotEmpty) {
