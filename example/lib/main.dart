@@ -146,11 +146,17 @@ class _MyHomePageState extends State<MyHomePage> {
   final _counterService = CounterService();
   late final String _username;
   late final String _avatarUrl;
+  StreamSubscription<List<OfflineObject<CounterLogModel>>>? _logsSubscription;
+  List<OfflineObject<CounterLogModel>> _recentLogs = const [];
 
-  void _incrementCounter() {
-    setState(() {
-      _counter++;
-    });
+  Future<void> _incrementCounter() async {
+    await _counterService.addLog(1);
+  }
+
+  @override
+  void dispose() {
+    _logsSubscription?.cancel();
+    super.dispose();
   }
 
   @override
@@ -170,6 +176,7 @@ class _MyHomePageState extends State<MyHomePage> {
       _username = user.username;
       _avatarUrl = user.avatarUrl ?? '';
       _counterFuture = _loadCounter();
+      _listenCounterLogs();
     }
   }
 
@@ -181,6 +188,26 @@ class _MyHomePageState extends State<MyHomePage> {
       _counter = total;
     });
     return total;
+  }
+
+  void _listenCounterLogs() {
+    _logsSubscription?.cancel();
+    _logsSubscription = _counterService.counterLogNode
+        .query()
+        .orderBy('created_at', descending: true)
+        .watch()
+        .listen((logs) {
+          final total = logs.fold<int>(
+            0,
+            (sum, log) => sum + log.item.increment,
+          );
+          if (!mounted) return;
+          setState(() {
+            _counter = total;
+            _counterFuture = Future.value(total);
+            _recentLogs = logs.take(5).toList();
+          });
+        });
   }
 
   @override
@@ -206,48 +233,135 @@ class _MyHomePageState extends State<MyHomePage> {
         ],
       ),
       body: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Column(
-                children: [
-                  AvatarPreview(avatarUrl: _avatarUrl),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Hello, $_username!',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Column(
+              children: [
+                AvatarPreview(avatarUrl: _avatarUrl),
+                const SizedBox(height: 16),
+                Text(
+                  'Hello, $_username!',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            Column(
+              children: [
+                const Text('Users have pushed the button this many times:'),
+                FutureBuilder<int>(
+                  future: _counterFuture,
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Padding(
+                        padding: EdgeInsets.all(8.0),
+                        child: CircularProgressIndicator(),
+                      );
+                    }
+                    return Text(
+                      '$_counter',
+                      style: Theme.of(context).textTheme.headlineMedium,
+                    );
+                  },
+                ),
+              ],
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                  child: Text(
+                    'Recent activities:',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  color: ColorScheme.of(context).surfaceContainerLow,
+                  padding: const EdgeInsets.all(24.0),
+                  height: MediaQuery.of(context).size.height * 0.35,
+                  child: ShaderMask(
+                    shaderCallback: (rect) =>
+                        LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: const [
+                            Colors.white,
+                            Colors.white,
+                            Colors.transparent,
+                          ],
+                          stops: const [0.0, 0.5, 1.0],
+                        ).createShader(
+                          Rect.fromLTWH(0, 0, rect.width, rect.height),
+                        ),
+                    blendMode: BlendMode.dstIn,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ..._recentLogs.take(5).map((log) {
+                          final createdAt = log.item.createdAt;
+                          final formattedDate =
+                              '${createdAt.day.toString().padLeft(2, '0')}/${createdAt.month.toString().padLeft(2, '0')}/${createdAt.year} '
+                              '${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}';
+
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4.0),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                CircleAvatar(
+                                  radius: 14,
+                                  backgroundImage:
+                                      (log.item.username.isNotEmpty &&
+                                          _avatarUrl.isNotEmpty)
+                                      ? NetworkImage(_avatarUrl)
+                                      : null,
+                                  child:
+                                      (log.item.username.isEmpty ||
+                                          _avatarUrl.isEmpty)
+                                      ? const Icon(Icons.person, size: 16)
+                                      : null,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        'Increased by ${log.item.increment} by ${log.item.username}',
+                                        style: Theme.of(
+                                          context,
+                                        ).textTheme.bodyMedium,
+                                      ),
+                                      Text(
+                                        formattedDate,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(color: Colors.grey[600]),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }),
+                      ],
                     ),
                   ),
-                ],
-              ),
-              Column(
-                children: [
-                  const Text('Users have pushed the button this many times:'),
-                  FutureBuilder<int>(
-                    future: _counterFuture,
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting) {
-                        return const Padding(
-                          padding: EdgeInsets.all(8.0),
-                          child: CircularProgressIndicator(),
-                        );
-                      }
-                      return Text(
-                        '$_counter',
-                        style: Theme.of(context).textTheme.headlineMedium,
-                      );
-                    },
-                  ),
-                ],
-              ),
-              SizedBox(height: 150),
-            ],
-          ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
       floatingActionButton: FloatingActionButton(
