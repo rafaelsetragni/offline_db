@@ -118,48 +118,20 @@ class _SignInPageState extends State<SignInPage> {
 }
 
 /// Main screen showing counter, users, logs, and avatar editing.
-class MyHomePage extends StatefulWidget {
+class MyHomePage extends StatelessWidget {
   const MyHomePage({super.key});
 
-  @override
-  State<MyHomePage> createState() => _MyHomePageState();
-}
-
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
-  Future<int>? _counterFuture;
-  final _counterService = CounterService();
-  late final String _username;
-  String _avatarUrl = '';
-  StreamSubscription<List<OfflineObject<CounterLogModel>>>? _logsSubscription;
-  StreamSubscription<List<OfflineObject<UserModel>>>? _usersSubscription;
-  List<OfflineObject<CounterLogModel>> _recentLogs = [];
-  List<OfflineObject<UserModel>> _users = [];
-  final Map<String, String?> _userAvatars = {};
-  final GlobalKey<AnimatedListState> _logListKey =
-      GlobalKey<AnimatedListState>();
-
-  Future<void> _incrementCounter() async {
-    await _counterService.addLog(1);
-  }
-
-  Future<void> _decrementCounter() async {
-    await _counterService.addLog(-1);
-  }
-
-  Future<void> _onAvatarTap() async {
-    final url = await _promptAvatarDialog();
+  Future<void> _onAvatarTap(BuildContext context, String currentAvatar) async {
+    final url = await _promptAvatarDialog(context, currentAvatar);
     if (url == null) return;
-    final updated = await _counterService.updateAvatarUrl(url);
-    if (!mounted) return;
-    setState(() {
-      _avatarUrl = updated.avatarUrl ?? '';
-      _userAvatars[updated.username] = updated.avatarUrl;
-    });
+    await CounterService().updateAvatarUrl(url);
   }
 
-  Future<String?> _promptAvatarDialog() async {
-    final controller = TextEditingController(text: _avatarUrl);
+  Future<String?> _promptAvatarDialog(
+    BuildContext context,
+    String currentAvatar,
+  ) async {
+    final controller = TextEditingController(text: currentAvatar);
     final result = await showDialog<String>(
       context: context,
       builder: (context) {
@@ -191,164 +163,201 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   @override
-  void dispose() {
-    _logsSubscription?.cancel();
-    _usersSubscription?.cancel();
-    super.dispose();
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    final user = _counterService.authenticatedUser;
+  Widget build(BuildContext context) {
+    final user = CounterService().authenticatedUser;
     if (user == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _counterService.navigateToSignIn();
-      });
-      _username = '';
-      _avatarUrl = '';
-    } else {
-      _username = user.username;
-      _avatarUrl = user.avatarUrl ?? '';
-      _counterFuture = _loadCounter();
-      _listenCounterLogs();
-      _listenUsers();
-    }
-  }
-
-  Future<int> _loadCounter() async {
-    final logs = await _counterService.getLogs();
-    final total = logs.fold<int>(0, (sum, log) => sum + log.item.increment);
-    if (!mounted) return total;
-    setState(() {
-      _counter = total;
-    });
-    return total;
-  }
-
-  void _listenCounterLogs() {
-    _logsSubscription?.cancel();
-    _logsSubscription = _counterService.watchLogs().listen((logs) async {
-      final total = logs.fold<int>(0, (sum, log) => sum + log.item.increment);
-      final recent = logs.take(5).toList();
-      final missingUsernames = recent
-          .map((log) => log.item.username)
-          .where((username) => !_userAvatars.containsKey(username))
-          .toSet();
-
-      Map<String, String?> avatars = {};
-      if (missingUsernames.isNotEmpty) {
-        avatars = await _counterService.getAvatarsForUsers(missingUsernames);
-      }
-
-      if (!mounted) return;
-      setState(() {
-        _counter = total;
-        _counterFuture = Future.value(total);
-        if (avatars.isNotEmpty) _userAvatars.addAll(avatars);
-      });
-
-      _updateRecentLogs(recent);
-    });
-  }
-
-  void _listenUsers() {
-    _usersSubscription?.cancel();
-    _usersSubscription = _counterService.watchUsers().listen((users) {
-      if (!mounted) return;
-      final updatedAvatars = {
-        for (final user in users) user.item.username: user.item.avatarUrl,
-      };
-      setState(() {
-        _users = users;
-        _userAvatars.addAll(updatedAvatars);
-        String? newAvatar;
-        for (final user in users) {
-          if (user.item.username == _username) {
-            newAvatar = user.item.avatarUrl;
-            break;
-          }
-        }
-        _avatarUrl = newAvatar ?? _avatarUrl;
-      });
-    });
-  }
-
-  void _updateRecentLogs(List<OfflineObject<CounterLogModel>> recent) {
-    final listKey = _logListKey.currentState;
-    if (listKey == null) {
-      setState(() {
-        _recentLogs = recent;
-      });
-      return;
+      return const SizedBox.shrink();
     }
 
-    if (_recentLogs.isEmpty && recent.isNotEmpty) {
-      for (var i = recent.length - 1; i >= 0; i--) {
-        _recentLogs.insert(0, recent[i]);
-        listKey.insertItem(0);
-      }
-      return;
-    }
+    return Scaffold(
+      appBar: AppBar(
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Logout',
+            onPressed: () async {
+              await CounterService().signOut();
+            },
+          ),
+        ],
+      ),
+      body: Center(
+        child: StreamBuilder(
+          stream: CounterService().watchUsers(),
+          builder: (context, usersSnapshot) {
+            final users = usersSnapshot.data ?? const [];
+            final avatarMap = {
+              for (final u in users) u.item.username: u.item.avatarUrl,
+            };
+            final currentUserAvatar =
+                avatarMap[user.username] ?? user.avatarUrl ?? '';
 
-    if (recent.isEmpty) {
-      for (var i = _recentLogs.length - 1; i >= 0; i--) {
-        final removed = _recentLogs.removeAt(i);
-        listKey.removeItem(
-          i,
-          (context, animation) => _buildAnimatedLogTile(removed, animation),
-        );
-      }
-      return;
-    }
+            return StreamBuilder(
+              stream: CounterService().watchLogs(),
+              builder: (context, logsSnapshot) {
+                final logs = logsSnapshot.data ?? const [];
+                final total = logs.fold<int>(
+                  0,
+                  (sum, log) => sum + log.item.increment,
+                );
+                final recentLogs = logs.take(5).toList();
 
-    final newHeadId = recent.first.item.id;
-    final currentHeadId = _recentLogs.isNotEmpty
-        ? _recentLogs.first.item.id
-        : null;
-
-    if (newHeadId != currentHeadId) {
-      _recentLogs.insert(0, recent.first);
-      listKey.insertItem(0);
-      if (_recentLogs.length > 5) {
-        final removed = _recentLogs.removeLast();
-        listKey.removeItem(
-          _recentLogs.length,
-          (context, animation) => _buildAnimatedLogTile(removed, animation),
-        );
-      }
-    }
-
-    for (var i = 1; i < recent.length && i < _recentLogs.length; i++) {
-      _recentLogs[i] = recent[i];
-    }
-
-    while (_recentLogs.length > recent.length) {
-      final removed = _recentLogs.removeLast();
-      listKey.removeItem(
-        _recentLogs.length,
-        (context, animation) => _buildAnimatedLogTile(removed, animation),
-      );
-    }
-
-    for (var i = _recentLogs.length; i < recent.length; i++) {
-      _recentLogs.insert(i, recent[i]);
-      listKey.insertItem(i);
-    }
-  }
-
-  Widget _buildAnimatedLogTile(
-    OfflineObject<CounterLogModel> log,
-    Animation<double> animation,
-  ) {
-    return SizeTransition(
-      sizeFactor: animation,
-      child: FadeTransition(opacity: animation, child: _buildLogTile(log)),
+                return Column(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Column(
+                      children: [
+                        GestureDetector(
+                          onTap: () => _onAvatarTap(context, currentUserAvatar),
+                          child: AvatarPreview(
+                            avatarUrl: currentUserAvatar,
+                            showEditIndicator: true,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Hello, ${user.username}!',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.headlineMedium
+                              ?.copyWith(fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 16),
+                        const Text('Global counter updated by all users:'),
+                        if (logsSnapshot.connectionState ==
+                            ConnectionState.waiting)
+                          const Padding(
+                            padding: EdgeInsets.all(8.0),
+                            child: CircularProgressIndicator(),
+                          )
+                        else
+                          Text(
+                            '$total',
+                            style: Theme.of(context).textTheme.headlineMedium,
+                          ),
+                      ],
+                    ),
+                    SizedBox(
+                      height: MediaQuery.of(context).size.height * 0.15,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24.0,
+                          vertical: 8.0,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Text(
+                              'Users:',
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                            const SizedBox(height: 8),
+                            Expanded(
+                              child:
+                                  usersSnapshot.connectionState ==
+                                      ConnectionState.waiting
+                                  ? const Center(
+                                      child: CircularProgressIndicator(),
+                                    )
+                                  : ListView.separated(
+                                      scrollDirection: Axis.horizontal,
+                                      itemCount: users.length,
+                                      separatorBuilder: (_, __) =>
+                                          const SizedBox(width: 12),
+                                      itemBuilder: (context, index) {
+                                        final item = users[index];
+                                        final avatar =
+                                            item.item.avatarUrl ?? '';
+                                        return Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            CircleAvatar(
+                                              radius: 22,
+                                              backgroundImage: avatar.isNotEmpty
+                                                  ? NetworkImage(avatar)
+                                                  : null,
+                                              child: avatar.isEmpty
+                                                  ? const Icon(
+                                                      Icons.person,
+                                                      size: 22,
+                                                    )
+                                                  : null,
+                                            ),
+                                            const SizedBox(height: 6),
+                                            Text(item.item.username),
+                                          ],
+                                        );
+                                      },
+                                    ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                          child: Text(
+                            'Recent activities:',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          color: ColorScheme.of(context).surfaceContainerLow,
+                          padding: const EdgeInsets.all(24.0),
+                          height: MediaQuery.of(context).size.height * 0.35,
+                          child:
+                              logsSnapshot.connectionState ==
+                                  ConnectionState.waiting
+                              ? const Center(child: CircularProgressIndicator())
+                              : ListView.builder(
+                                  itemCount: recentLogs.length,
+                                  itemBuilder: (context, index) {
+                                    final log = recentLogs[index];
+                                    final avatar =
+                                        avatarMap[log.item.username] ?? '';
+                                    return _buildLogTile(context, log, avatar);
+                                  },
+                                ),
+                        ),
+                      ],
+                    ),
+                  ],
+                );
+              },
+            );
+          },
+        ),
+      ),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FloatingActionButton(
+            onPressed: CounterService().incrementCounter,
+            tooltip: 'Increment',
+            heroTag: 'increment_fab',
+            child: const Icon(Icons.add),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton(
+            onPressed: CounterService().decrementCounter,
+            tooltip: 'Decrement',
+            heroTag: 'decrement_fab',
+            child: const Icon(Icons.remove),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _buildLogTile(OfflineObject<CounterLogModel> log) {
+  Widget _buildLogTile(
+    BuildContext context,
+    OfflineObject<CounterLogModel> log,
+    String avatarUrl,
+  ) {
     final createdAt = log.item.createdAt;
     final formattedDate =
         '${createdAt.day.toString().padLeft(2, '0')}/${createdAt.month.toString().padLeft(2, '0')}/${createdAt.year} '
@@ -361,10 +370,10 @@ class _MyHomePageState extends State<MyHomePage> {
         children: [
           CircleAvatar(
             radius: 14,
-            backgroundImage: (_userAvatars[log.item.username] ?? '').isNotEmpty
-                ? NetworkImage(_userAvatars[log.item.username]!)
+            backgroundImage: avatarUrl.isNotEmpty
+                ? NetworkImage(avatarUrl)
                 : null,
-            child: (_userAvatars[log.item.username] ?? '').isEmpty
+            child: avatarUrl.isEmpty
                 ? const Icon(Icons.person, size: 16)
                 : null,
           ),
@@ -386,177 +395,6 @@ class _MyHomePageState extends State<MyHomePage> {
                 ),
               ],
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final hasAvatar = _avatarUrl.isNotEmpty;
-    if (_username.isEmpty) {
-      return const SizedBox.shrink();
-    }
-    return Scaffold(
-      appBar: AppBar(
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Logout',
-            onPressed: () async {
-              await CounterService().signOut();
-            },
-          ),
-        ],
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Column(
-              children: [
-                GestureDetector(
-                  onTap: _onAvatarTap,
-                  child: AvatarPreview(
-                    avatarUrl: _avatarUrl,
-                    showEditIndicator: true,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Hello, $_username!',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text('Global counter updated by all users:'),
-                FutureBuilder<int>(
-                  future: _counterFuture,
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Padding(
-                        padding: EdgeInsets.all(8.0),
-                        child: CircularProgressIndicator(),
-                      );
-                    }
-                    return Text(
-                      '$_counter',
-                      style: Theme.of(context).textTheme.headlineMedium,
-                    );
-                  },
-                ),
-              ],
-            ),
-            SizedBox(
-              height: MediaQuery.of(context).size.height * 0.15,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24.0,
-                  vertical: 8.0,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      'Users:',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 8),
-                    Expanded(
-                      child: ListView.separated(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: _users.length,
-                        separatorBuilder: (_, __) => const SizedBox(width: 12),
-                        itemBuilder: (context, index) {
-                          final user = _users[index];
-                          return Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              CircleAvatar(
-                                radius: 22,
-                                backgroundImage:
-                                    (user.item.avatarUrl ?? '').isNotEmpty
-                                    ? NetworkImage(user.item.avatarUrl!)
-                                    : null,
-                                child: (user.item.avatarUrl ?? '').isEmpty
-                                    ? const Icon(Icons.person, size: 22)
-                                    : null,
-                              ),
-                              const SizedBox(height: 6),
-                              Text(user.item.username),
-                            ],
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                  child: Text(
-                    'Recent activities:',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  color: ColorScheme.of(context).surfaceContainerLow,
-                  padding: const EdgeInsets.all(24.0),
-                  height: MediaQuery.of(context).size.height * 0.35,
-                  child: ShaderMask(
-                    shaderCallback: (rect) =>
-                        LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: const [
-                            Colors.white,
-                            Colors.white,
-                            Colors.transparent,
-                          ],
-                          stops: const [0.0, 0.5, 1.0],
-                        ).createShader(
-                          Rect.fromLTWH(0, 0, rect.width, rect.height),
-                        ),
-                    blendMode: BlendMode.dstIn,
-                    child: AnimatedList(
-                      key: _logListKey,
-                      initialItemCount: _recentLogs.length,
-                      itemBuilder: (context, index, animation) {
-                        final log = _recentLogs[index];
-                        return _buildAnimatedLogTile(log, animation);
-                      },
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-      floatingActionButton: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FloatingActionButton(
-            onPressed: _incrementCounter,
-            tooltip: 'Increment',
-            heroTag: 'increment_fab',
-            child: const Icon(Icons.add),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton(
-            onPressed: _decrementCounter,
-            tooltip: 'Decrement',
-            heroTag: 'decrement_fab',
-            child: const Icon(Icons.remove),
           ),
         ],
       ),
@@ -617,8 +455,8 @@ class CounterService {
   final navigatorKey = GlobalKey<NavigatorState>();
 
   factory CounterService({
-    UserNode? userNode,
-    CounterLogNode? counterLogNode,
+    OfflineNode<UserModel>? userNode,
+    OfflineNode<CounterLogModel>? counterLogNode,
     MongoApi? mongoApi,
     MongoPeriodicSyncStrategy? syncStrategy,
   }) => _instance ??= CounterService._internal(
@@ -633,17 +471,17 @@ class CounterService {
   UserModel? authenticatedUser;
   String _currentNamespace = 'default';
 
-  final UserNode userNode;
-  final CounterLogNode counterLogNode;
+  final OfflineNode<UserModel> userNode;
+  final OfflineNode<CounterLogModel> counterLogNode;
   final MongoPeriodicSyncStrategy syncStrategy;
 
   CounterService._internal({
-    UserNode? userNode,
-    CounterLogNode? counterLogNode,
+    OfflineNode<UserModel>? userNode,
+    OfflineNode<CounterLogModel>? counterLogNode,
     MongoApi? mongoApi,
     MongoPeriodicSyncStrategy? syncStrategy,
-  }) : userNode = userNode ?? UserNode(),
-       counterLogNode = counterLogNode ?? CounterLogNode(),
+  }) : userNode = userNode ?? _buildUserNode(),
+       counterLogNode = counterLogNode ?? _buildCounterLogNode(),
        syncStrategy =
            syncStrategy ??
            MongoPeriodicSyncStrategy(
@@ -807,7 +645,10 @@ class CounterService {
     return updated;
   }
 
-  Future<void> addLog(int increment) async {
+  void incrementCounter() => _createLog(1);
+  void decrementCounter() => _createLog(-1);
+
+  Future<void> _createLog(int increment) async {
     final username = authenticatedUser?.username;
     if (username == null) {
       throw Exception('User not authenticated');
@@ -843,74 +684,42 @@ class CounterService {
 
 /// Domain model for a user with avatar metadata.
 class UserModel {
+  final String id;
   final String username;
   final String? avatarUrl;
   final DateTime createdAt;
   final DateTime updatedAt;
 
   UserModel({
+    String? id,
     required this.username,
     required this.avatarUrl,
     DateTime? createdAt,
     DateTime? updatedAt,
-  }) : createdAt = createdAt ?? DateTime.now(),
+  }) : id = id ?? username,
+       createdAt = createdAt ?? DateTime.now(),
        updatedAt = updatedAt ?? DateTime.now();
-}
 
-/// Maps UserModel to/from JSON and resolves conflicts.
-class UserAdapter extends OfflineAdapter<UserModel> {
-  UserAdapter() : super(idFieldName: 'username');
-
-  @override
-  String getId(UserModel item) => item.username;
-
-  @override
-  Map<String, dynamic> toJson(UserModel item) {
+  Map<String, dynamic> toJson() {
     return {
-      'username': item.username,
-      'avatar_url': item.avatarUrl,
-      'created_at': item.createdAt.toIso8601String(),
-      'updated_at': item.updatedAt.toIso8601String(),
+      'id': id,
+      'username': username,
+      'avatar_url': avatarUrl,
+      'created_at': createdAt.toIso8601String(),
+      'updated_at': updatedAt.toIso8601String(),
     };
   }
 
-  @override
-  UserModel fromJson(Map<String, dynamic> json) {
+  factory UserModel.fromJson(Map<String, dynamic> json) {
+    final username = json['username'] ?? json['id'];
     return UserModel(
-      username: json['username'],
+      id: json['id'] ?? username,
+      username: username,
       avatarUrl: json['avatar_url'],
       createdAt: DateTime.parse(json['created_at']),
       updatedAt: DateTime.parse(json['updated_at']),
     );
   }
-
-  @override
-  OfflineObject<UserModel>? resolveConflict(
-    OfflineObject<UserModel> local,
-    OfflineObject<UserModel> remote,
-  ) {
-    if (local.item.updatedAt == remote.item.updatedAt) return remote;
-
-    final preferred = local.item.updatedAt.isAfter(remote.item.updatedAt)
-        ? local
-        : remote;
-
-    final fallback = identical(preferred, local) ? remote : local;
-    final avatarUrl = preferred.item.avatarUrl ?? fallback.item.avatarUrl;
-    return preferred.copyWith(
-      item: UserModel(
-        username: preferred.item.username,
-        avatarUrl: avatarUrl,
-        createdAt: preferred.item.createdAt,
-        updatedAt: preferred.item.updatedAt,
-      ),
-    );
-  }
-}
-
-/// OfflineDB node binding users to persistence and sync rules.
-class UserNode extends OfflineNode<UserModel> {
-  UserNode() : super('user', adapter: UserAdapter());
 }
 
 /// Domain model for counter increment/decrement events.
@@ -930,28 +739,18 @@ class CounterLogModel {
   }) : id = id ?? '${username}_${DateTime.now().millisecondsSinceEpoch}',
        createdAt = createdAt ?? DateTime.now(),
        updatedAt = updatedAt ?? DateTime.now();
-}
 
-/// Maps CounterLogModel to/from JSON and resolves conflicts.
-class CounterLogAdapter extends OfflineAdapter<CounterLogModel> {
-  CounterLogAdapter() : super(idFieldName: 'id');
-
-  @override
-  String getId(CounterLogModel item) => item.id;
-
-  @override
-  Map<String, dynamic> toJson(CounterLogModel item) {
+  Map<String, dynamic> toJson() {
     return {
-      'id': item.id,
-      'username': item.username,
-      'increment': item.increment,
-      'created_at': item.createdAt.toIso8601String(),
-      'updated_at': item.updatedAt.toIso8601String(),
+      'id': id,
+      'username': username,
+      'increment': increment,
+      'created_at': createdAt.toIso8601String(),
+      'updated_at': updatedAt.toIso8601String(),
     };
   }
 
-  @override
-  CounterLogModel fromJson(Map<String, dynamic> json) {
+  factory CounterLogModel.fromJson(Map<String, dynamic> json) {
     return CounterLogModel(
       id: json['id'],
       username: json['username'],
@@ -960,19 +759,49 @@ class CounterLogAdapter extends OfflineAdapter<CounterLogModel> {
       updatedAt: DateTime.parse(json['updated_at']),
     );
   }
-
-  @override
-  OfflineObject<CounterLogModel>? resolveConflict(
-    OfflineObject<CounterLogModel> local,
-    OfflineObject<CounterLogModel> remote,
-  ) {
-    return local.item.updatedAt.isAfter(remote.item.updatedAt) ? local : remote;
-  }
 }
 
-/// OfflineDB node for counter log entries.
-class CounterLogNode extends OfflineNode<CounterLogModel> {
-  CounterLogNode() : super('counter_log', adapter: CounterLogAdapter());
+OfflineNode<UserModel> _buildUserNode() {
+  return OfflineNode.standalone(
+    'user',
+    adapter: SimpleAdapter<UserModel>(
+      getId: (user) => user.id,
+      toJson: (user) => user.toJson(),
+      fromJson: (json) => UserModel.fromJson(json),
+      onConflict: (local, remote) {
+        if (local.item.updatedAt == remote.item.updatedAt) return remote;
+
+        final preferred = local.item.updatedAt.isAfter(remote.item.updatedAt)
+            ? local
+            : remote;
+
+        final fallback = identical(preferred, local) ? remote : local;
+        final avatarUrl = preferred.item.avatarUrl ?? fallback.item.avatarUrl;
+        return preferred.copyWith(
+          item: UserModel(
+            id: preferred.item.id,
+            username: preferred.item.username,
+            avatarUrl: avatarUrl,
+            createdAt: preferred.item.createdAt,
+            updatedAt: preferred.item.updatedAt,
+          ),
+        );
+      },
+    ),
+  );
+}
+
+OfflineNode<CounterLogModel> _buildCounterLogNode() {
+  return OfflineNode.standalone(
+    'counter_log',
+    adapter: SimpleAdapter<CounterLogModel>(
+      getId: (log) => log.id,
+      toJson: (log) => log.toJson(),
+      fromJson: (json) => CounterLogModel.fromJson(json),
+      onConflict: (local, remote) =>
+          local.item.updatedAt.isAfter(remote.item.updatedAt) ? local : remote,
+    ),
+  );
 }
 
 /// Periodically syncs pending changes with MongoDB and pulls updates.
